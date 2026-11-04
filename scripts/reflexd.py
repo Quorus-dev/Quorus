@@ -4548,6 +4548,7 @@ class Reflexd:
             has_workspace=has_workspace, worktree=worktree,
             from_agent=is_agent_participant(wake_sender),
             manual=room_mode == "manual",
+            can_run=harness == "codex",
             lead=lead_for(wake_room),
             owner=os.environ.get("REFLEXD_OWNER") or None,
             untrusted=(owner if room_mode != "default"

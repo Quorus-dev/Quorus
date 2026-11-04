@@ -90,17 +90,29 @@ def _prompt(d, *, sender: str, trusted: bool, harness: str = "codex") -> str:
 
 def test_the_owners_turn_is_told_once_with_the_command(monkeypatch, tmp_path) -> None:
     text = _prompt(_daemon(monkeypatch, tmp_path), sender="arav", trusted=True)
-    assert "You can't edit files or run commands in this turn" in text
+    assert "You can't edit files or commit in this turn" in text
     assert "`quorus agent add codex --room build --mode autonomous`" in text
     assert "say that once, in one line, and stop" in text
     assert "Don't hand the task to a teammate agent" in text
+
+
+def test_a_read_only_codex_still_runs_the_tests(monkeypatch, tmp_path) -> None:
+    """Codex's read-only sandbox runs commands that don't write. Told it had no
+    commands, a codex reviewer posted GO without running the tests (live run,
+    2026-11-04); opencode really has no shell, so it keeps the stricter line."""
+    d = _daemon(monkeypatch, tmp_path)
+    codex = _prompt(d, sender="arav", trusted=True)
+    assert "run them on work you review" in codex and "run commands in this turn" not in codex
+    opencode = _prompt(d, sender="arav", trusted=True, harness="opencode")
+    assert "You can't edit files or run commands in this turn" in opencode
+    assert "run them on work you review" not in opencode
 
 
 def test_an_untrusted_sender_never_sees_the_command(monkeypatch, tmp_path) -> None:
     for mode in ("default", "autonomous", "manual"):
         text = _prompt(_daemon(monkeypatch, tmp_path, mode), sender="mallory", trusted=False)
         assert "--mode autonomous" not in text
-        assert "You can't edit files or run commands in this turn" not in text
+        assert "You can't edit files or" not in text
 
 
 def test_no_claim_when_the_harness_may_write(monkeypatch, tmp_path) -> None:
