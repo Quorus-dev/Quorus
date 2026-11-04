@@ -5,6 +5,26 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.16] — 2026-11-04
+
+### Fixed
+
+- Joining a teammate's room on their relay no longer replaces your own setup. The
+  join used to write their relay over `~/.quorus/config.json`, so the next start
+  overwrote your `default` profile, key included, and every MCP client was pointed
+  at their relay. A join to another relay (or under another name) is now saved as
+  its own profile, named after the relay's host. Your setup and agents stay as they
+  were, and the join prints how to post there:
+  `QUORUS_PROFILE=<profile> quorus say <room> "hi"`.
+- A join whose signup returns no key stops with an error instead of saving a setup
+  that can't post.
+- A Codex reviewer runs the tests before its verdict. In a room's default mode Codex
+  runs read-only, which still runs commands that don't write, but it was told it
+  couldn't run commands, so it approved without testing.
+- `quorus agent add <tool> --reviewer` for the agent that is already the room's
+  reviewer re-pins and starts it. It used to refuse, so removing and re-adding a
+  reviewer (the way to restart it) left the room with no reviewer running.
+
 ## [0.7.15] — 2026-11-02
 
 ### Added
