@@ -224,7 +224,10 @@ def pin_reviewer(prep: dict[str, Any], *, replace: bool = False,
     cfg, name, room = prep["cfg"], prep["name"], prep["room"]
     files = room_files(room, [prep["state_dir"], *(state_dirs or [])])
     current = current_reviewers(room, files)
-    if current and not replace:
+    # The same agent again is a re-pin, not a replacement: `agent remove` keeps
+    # the gate (commits stay held), and re-adding the reviewer refused to start
+    # it at all (live run, 2026-11-04).
+    if current and not replace and set(current) != {name}:
         who = ", @".join(current)
         raise agent_identity.IdentityError(
             f"#{room} already has @{who} as its reviewer (add --replace to change it)")

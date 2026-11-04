@@ -191,6 +191,16 @@ def test_an_existing_gate_is_kept(cfg, monkeypatch):
     assert rg.reviewer_for("general")["name"] == "a-gemini"
 
 
+def test_re_adding_the_reviewer_repins_it(cfg, monkeypatch):
+    """`agent remove` keeps the gate; adding the same agent back re-pins it to
+    its current key instead of refusing to start it (live run, 2026-11-04)."""
+    _fake_identity(monkeypatch)
+    rg.save_reviewer("general", "a-codex", tenant="_legacy", claim_id="c-old")
+    gate_setup.pin_reviewer(_prep("codex"))
+    assert rg.reviewer_for("general")["name"] == "a-codex"
+    assert rg.reviewer_for("general")["claim_id"] == "c-new"
+
+
 def test_a_failure_with_replace_keeps_the_old_gate(cfg, monkeypatch):
     rg.save_reviewer("general", "a-gemini", tenant="_legacy", claim_id="c-old")
 
