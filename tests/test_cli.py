@@ -2434,9 +2434,11 @@ def test_cmd_join_requires_room(capsys, monkeypatch):
     assert "Room is required" in captured.out
 
 
-def test_cmd_join_with_explicit_flags_rewrites_config(tmp_path, monkeypatch, capsys):
-    """Join with explicit --relay flag should rewrite config."""
+def test_cmd_join_with_explicit_flags_saves_a_profile(tmp_path, monkeypatch, capsys):
+    """Join with --relay to another relay saves it as a profile of its own and
+    leaves the existing setup current (it used to be overwritten, 2026-11-04)."""
     from quorus.cli import _cmd_join
+    from quorus.profiles import ProfileManager
 
     # Set up existing config
     config_dir = tmp_path / ".quorus"
@@ -2469,10 +2471,11 @@ def test_cmd_join_with_explicit_flags_rewrites_config(tmp_path, monkeypatch, cap
 
     _cmd_join(args)
 
-    # Config SHOULD have been overwritten with new values
-    saved_config = json.loads(config_path.read_text())
-    assert saved_config["relay_url"] == "http://new-relay:8080"
-    assert saved_config["relay_secret"] == "new-secret"
+    pm = ProfileManager(config_dir)
+    assert pm.current() == "default" and pm.get("default") == original_config
+    joined = pm.get("new-relay")
+    assert joined["relay_url"] == "http://new-relay:8080"
+    assert joined["relay_secret"] == "new-secret"
 
 
 def test_cmd_join_uses_explicit_auth_for_room_lookup_and_join(
