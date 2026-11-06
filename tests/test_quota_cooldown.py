@@ -150,3 +150,114 @@ def test_wait_is_human_and_timezone_free() -> None:
     assert reflexd._human_wait(3 * 3600) == "3 h"
     assert reflexd._human_wait(2.5 * 3600) == "2.5 h"
     assert reflexd._human_wait(21.6 * 3600) == "22 h"
+
+
+def test_messages_during_the_pause_are_answered_after_it(monkeypatch) -> None:
+    """The pause line says "will pick up again then": it must. The newest
+    message per room is woken for once the reset passes (overseer, 2026-11-05:
+    ~330 of arav-codex's wakes were dropped and never answered)."""
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex"))
+    monkeypatch.setattr(d.adapter, "run", lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("woken during the pause")))
+    relay = _Relay()
+    woke: list[tuple[str, str]] = []
+
+    async def scenario() -> None:
+        d.adapter.limited_until = time.time() + 0.2
+        for mid, room in (("m1", "build"), ("m2", "build"), ("m3", "ops")):
+            await d._wake_and_reply(relay, {"id": mid, "message_id": mid, "room": room,
+                                            "from_name": "arav", "content": "hi",
+                                            "message_type": "chat"}, reason="t")
+
+        async def record(_relay, envelope, **_kw) -> None:
+            woke.append((envelope["room"], envelope["id"]))
+
+        monkeypatch.setattr(d, "_wake_and_reply", record)
+        await asyncio.wait_for(d._limit_task, timeout=10)
+
+    asyncio.run(scenario())
+    assert sorted(woke) == [("build", "m2"), ("ops", "m3")]  # once per room, newest
+    assert sorted(m["room"] for m in relay.posted) == ["build", "ops"]  # told once per room
+    assert all("out of quota" in m["content"] for m in relay.posted)
+
+
+def test_a_pause_extended_meanwhile_is_waited_out(monkeypatch) -> None:
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex"))
+    woke: list[float] = []
+
+    async def scenario() -> None:
+        d.adapter.limited_until = time.time() + 0.1
+        await d._wake_and_reply(_Relay(), {"id": "m", "message_id": "m", "room": "build",
+                                           "from_name": "arav", "content": "hi",
+                                           "message_type": "chat"}, reason="t")
+        d.adapter.limited_until = time.time() + 1.5  # the vendor moved the reset
+
+        async def record(*_a, **_kw) -> None:
+            woke.append(time.time())
+
+        monkeypatch.setattr(d, "_wake_and_reply", record)
+        await asyncio.wait_for(d._limit_task, timeout=10)
+        assert woke and woke[0] >= d.adapter.limited_until
+
+    asyncio.run(scenario())
+
+
+def test_the_turn_that_hits_the_limit_is_retried_after_it(monkeypatch) -> None:
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex"))
+
+    async def hits_limit(*_a: Any, **_k: Any) -> str:
+        d.adapter.limited_until = time.time() + 600
+        return "⚠ codex: You've hit your usage limit. Try again in 10 minutes."
+
+    class Relay(_Relay):
+        def __getattr__(self, _name):
+            async def anything(*_a, **_k):
+                return {}
+            return anything
+
+    monkeypatch.setattr(d.adapter, "run", hits_limit)
+
+    async def scenario() -> None:
+        await d._wake_and_reply(Relay(), {"id": "m", "message_id": "m", "room": "build",
+                                          "from_name": "arav", "content": "@a-codex hi",
+                                          "message_type": "chat"}, reason="t")
+        assert list(d._limit_parked) == ["build"]
+        d._limit_task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_retry_that_hits_the_limit_again_waits_quietly(monkeypatch) -> None:
+    """No reset time from the vendor, so the 30-minute guess was early: the retry
+    hit the limit again and posted a second ⚠ (live run, 2026-11-05)."""
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex"))
+
+    async def hits_limit(*_a: Any, **_k: Any) -> str:
+        d.adapter.limited_until = time.time() + 600
+        return "⚠ codex: the vendor reports the account's usage limit has been reached."
+
+    class Relay(_Relay):
+        def __getattr__(self, _name):
+            async def anything(*_a, **_k):
+                return {}
+            return anything
+
+    monkeypatch.setattr(d.adapter, "run", hits_limit)
+    relay = Relay()
+    env = {"id": "m", "message_id": "m", "room": "build", "from_name": "arav",
+           "content": "@a-codex hi", "message_type": "chat"}
+
+    async def scenario() -> None:
+        await d._wake_and_reply(relay, env, reason="t")
+        first = len(relay.posted)
+        d.adapter.limited_until = 0.0
+        await d._wake_and_reply(relay, {**env, "limit_retry": True}, reason="t")
+        assert len(relay.posted) == first  # nothing new in the room
+        assert list(d._limit_parked) == ["build"]  # and it waits again
+        d._limit_task.cancel()
+
+    asyncio.run(scenario())

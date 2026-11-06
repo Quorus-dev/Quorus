@@ -91,6 +91,7 @@ from quorus.runtime import handoff_delivery as _handoff_delivery  # noqa: E402
 from quorus.runtime import handoff_recovery as _handoff_recovery  # noqa: E402
 from quorus.runtime import handoff_runtime as _handoff_runtime  # noqa: E402
 from quorus.runtime import handoff_sender as _handoff_sender  # noqa: E402
+from quorus.runtime import keep_going as _keep_going  # noqa: E402
 from quorus.runtime import memory as _mem  # noqa: E402  Stream B
 from quorus.runtime import owner_pin as _owner_pin  # noqa: E402  invitee agents
 from quorus.runtime import review_gate as _review_gate  # noqa: E402  review gate
@@ -1149,6 +1150,15 @@ _OPENCODE_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
         "configuration is invalid",
         "opencode refused its configuration. Check `opencode --version` (Quorus is "
         "tested on opencode 2) and any opencode.json in this repo, then mention me again",
+    ),
+    (
+        # A leftover `opencode serve --service` holds the port while opencode
+        # reports the service stopped, so every run fails (live, 2026-11-05).
+        "managed service port",
+        "opencode's background service port is held by an old opencode process, so "
+        "opencode can't start. Run `opencode service status`; if it says stopped, end the "
+        "old `opencode serve --service` process (`lsof -i :<port>` shows it), then "
+        "mention me again",
     ),
 )
 
@@ -2864,6 +2874,15 @@ class Reflexd:
         # own @mentions queued for an hour (overseer, fix 16).
         self._pace_parked: dict[str, tuple[dict[str, Any], Any]] = {}
         self._pace_task: asyncio.Task | None = None
+        # Messages that arrived while the vendor's quota was out, newest per
+        # room, woken for once it resets. The pause line promised "will pick up
+        # again then" while nothing did: ~330 of arav-codex's wakes were
+        # dropped this way, 287 on 2026-10-28 alone (overseer, 2026-11-05).
+        self._limit_parked: dict[str, tuple[dict[str, Any], Any]] = {}
+        self._limit_task: asyncio.Task | None = None
+        # Rooms whose last turn ended with /continue: the next turn's task.
+        self._keep_going_tasks: dict[str, asyncio.Task] = {}
+        self._continue_asked: dict[str, dict[str, Any]] = {}
         self._readonly_warned: set[str] = set()  # worktrees told "stuck marker"
         # Unfinished-turn holds whose marker couldn't be written: still honoured
         # by this process (the marker is what survives a restart).
@@ -3206,6 +3225,10 @@ class Reflexd:
         """One wake, shown to the room as presence ``busy`` while it runs:
         before this, nobody could tell a working agent from a dead one
         until its reply landed (sometimes minutes later)."""
+        if (_keep_going.is_stop_command(envelope.get("content") or "")
+                and not is_agent_participant(envelope.get("from_name") or "")):
+            await self._stop_keep_going(relay, envelope)
+            return
         mid = envelope_canonical_id(envelope) or ""
         if mid and self._attempt(mid) > MAX_WAKE_ATTEMPTS:
             # A wake that never finished (hung harness, crash, restart) was
@@ -3229,6 +3252,75 @@ class Reflexd:
                 envelope.get("room") or "" if self._degraded_reason else "")
         if mid:
             self._finish_attempt(mid)  # reached only when the wake completed
+        asked = self._continue_asked.pop(envelope.get("room") or "", None)
+        if asked is not None:
+            await self._schedule_keep_going(relay, asked, triage)
+
+    async def _schedule_keep_going(self, relay: RelayClient, envelope: dict[str, Any],
+                                   triage: Any) -> None:
+        """The turn ended with /continue: wake again for the same request, unless
+        it has had its turns (see quorus/runtime/keep_going.py)."""
+        room, name = envelope.get("room") or "", self.config.participant_name
+        limit, done = _keep_going.max_turns(), _keep_going.turn_of(envelope)
+        if limit == 0:
+            return
+        if done >= limit:
+            line = (f"⚠ @{name} stopped after {done} turns on its own without finishing; "
+                    "its work so far stays on its branch, unpublished. @-mention it to "
+                    "carry on")
+            await self._post_status(relay, room, envelope, line)
+            self._alert_owner(room, line)
+            return
+        nxt = _keep_going.next_envelope(envelope, datetime.now(timezone.utc).isoformat())
+        old = self._keep_going_tasks.get(room)
+        if old is not None and not old.done() and old is not asyncio.current_task():
+            old.cancel()  # a newer request in this room supersedes the old run
+        self._keep_going_tasks[room] = asyncio.get_running_loop().create_task(
+            self._keep_going_turn(relay, nxt, triage))
+
+    async def _stop_keep_going(self, relay: RelayClient, envelope: dict[str, Any]) -> None:
+        """A person posted /stop: end this room's run now, with no turn for it."""
+        room = envelope.get("room") or ""
+        task = self._keep_going_tasks.pop(room, None)
+        if task is None or task.done() or task is asyncio.current_task():
+            logger.info("/stop in room=%s: no run of turns to stop", room)
+            return
+        task.cancel()
+        await self._post_status(
+            relay, room, envelope,
+            f"@{self.config.participant_name} stopped: @{envelope.get('from_name') or '?'} "
+            "posted /stop. Its work so far stays on its branch, unpublished")
+
+    async def _keep_going_turn(self, relay: RelayClient, envelope: dict[str, Any],
+                               triage: Any) -> None:
+        await self._sleep_or_stop(_keep_going.GAP_S)
+        if self._stop.is_set():
+            return
+        room = envelope.get("room") or ""
+        try:  # a relay timestamp ends in Z, which 3.10's fromisoformat refuses
+            since = datetime.fromisoformat(str(envelope["continue_since"]).replace("Z", "+00:00"))
+        except ValueError:
+            since = datetime.now(timezone.utc)
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        try:
+            recent = await relay.fetch_recent(room=room, limit=50)
+        except Exception:
+            recent = []
+        who = _keep_going.stopped_by(recent, since=lambda ts: _ts_after(ts, since),
+                                     is_agent=is_agent_participant)
+        if who:
+            await self._post_status(
+                relay, room, envelope,
+                f"@{self.config.participant_name} stopped: @{who} posted /stop. Its work "
+                "so far stays on its branch, unpublished")
+            return
+        logger.info("keep going: turn %d room=%s", _keep_going.turn_of(envelope), room)
+        try:
+            async with self._wake_lock:
+                await self._wake_and_reply(relay, envelope, triage=triage, reason="keep going")
+        except Exception as exc:
+            logger.exception("keep-going turn failed: %s", exc)
 
     def _attempt(self, mid: str) -> int:
         """Count a start for *mid* (persisted, so restarts count); return it."""
@@ -3540,9 +3632,10 @@ class Reflexd:
         except OSError as exc:
             logger.warning("could not refresh agent identity: %s", exc)
 
-    async def _limited(self, relay: RelayClient, envelope: dict[str, Any]) -> bool:
+    async def _limited(self, relay: RelayClient, envelope: dict[str, Any],
+                       triage: Any = None) -> bool:
         """While the vendor's quota is out, don't wake the agent: say so once
-        per room, then stay quiet until it resets."""
+        per room, keep the message, and wake for it when the pause ends."""
         until = getattr(self.adapter, "limited_until", 0.0) or 0.0
         if until <= time.time():
             return False
@@ -3553,7 +3646,40 @@ class Reflexd:
             # 04:33" to a room reading it in Toronto (2026-10-17).
             await self._post_status(relay, room, envelope, self._pause_line(until))
         logger.info("skipping wake: harness paused until %s", until)
+        self._park_for_reset(relay, envelope, triage)
         return True
+
+    def _park_for_reset(self, relay: RelayClient, envelope: dict[str, Any],
+                        triage: Any) -> None:
+        """Hold the newest message per room until the pause ends. One wake per
+        room is enough: the wake reads the room, so it sees what came before."""
+        self._limit_parked[envelope.get("room") or ""] = (envelope, triage)
+        logger.info("parked room=%s until the pause ends", envelope.get("room") or "")
+        if self._limit_task is None or self._limit_task.done():
+            self._limit_task = asyncio.get_running_loop().create_task(
+                self._release_limited(relay))
+
+    async def _release_limited(self, relay: RelayClient) -> None:
+        """Sleep out the pause (it may be extended meanwhile), then wake once
+        per parked room. A wake that hits the limit again parks itself again."""
+        while not self._stop.is_set():
+            left = (getattr(self.adapter, "limited_until", 0.0) or 0.0) - time.time()
+            if left > 0:
+                await self._sleep_or_stop(min(left + 1.0, PACE_RECHECK_S))
+                continue
+            parked, self._limit_parked = self._limit_parked, {}
+            if not parked:
+                return
+            logger.info("pause over — waking for %d room(s) parked meanwhile", len(parked))
+            for envelope, triage in parked.values():
+                if self._stop.is_set():
+                    return
+                try:
+                    async with self._wake_lock:
+                        await self._wake_and_reply(relay, {**envelope, "limit_retry": True},
+                                                   triage=triage)
+                except Exception as exc:  # one bad wake mustn't strand the rest
+                    logger.exception("wake after the pause failed: %s", exc)
 
     def _pause_line(self, until: float) -> str:
         """The vendor's reset when it gave one; our retry, marked "?", when not;
@@ -3618,7 +3744,7 @@ class Reflexd:
         if not self.config.spawn_enabled:
             logger.info("spawn disabled (test mode); skipping harness call")
             return
-        if await self._limited(relay, envelope):
+        if await self._limited(relay, envelope, triage):
             incoming = _failover.continuation(envelope)
             if (_handoff_sender.enabled(room, ROOM_BINDINGS_PATH) and incoming
                     and incoming.get("capsule")):
@@ -3630,7 +3756,8 @@ class Reflexd:
                     await _handoff_delivery.busy(self, relay, envelope, incoming, wt)
             return
         wake_id = envelope_canonical_id(envelope)
-        if wake_id and wake_id in self._answered.get(room, {}):
+        if (wake_id and wake_id in self._answered.get(room, {})
+                and not _keep_going.turn_of(envelope)):
             # A lead @-mentioned by every teammate built a queue of mentions,
             # then woke once per item it had already seen in an earlier wake's
             # transcript and answered: ~10 NO_REPLY wakes in a row (live
@@ -3974,6 +4101,10 @@ class Reflexd:
                 await _failover.save_reason(self.config, self._degraded_reason)
             except OSError:
                 logger.warning("could not persist degraded vendor state")
+        wants_more = bool(trusted) and not turn_failed and _keep_going.asks_to_continue(reply)
+        if wants_more:
+            reply = _keep_going.strip_marker(reply)
+            self._continue_asked[room] = envelope
         if reflexd_wake.is_no_reply(reply):
             # The agent read the message and chose not to answer.
             logger.info("agent chose NO_REPLY room=%s", room)
@@ -3989,6 +4120,8 @@ class Reflexd:
         if worktree is not None and (await self._settle_readonly(
                 relay, room, worktree, readonly_snap, envelope) or readonly_turn):
             pass  # a read-only turn never publishes, whatever its harness wrote
+        elif worktree is not None and wants_more:
+            pass  # unfinished by its own say: the hold stays, the last turn publishes
         elif worktree is not None and turn_failed:
             # Cut off or failed mid-work: hold first (fail closed), then copy
             # its commits to <branch>-unfinished for review. Never to the
@@ -4165,6 +4298,15 @@ class Reflexd:
             reply = reply.replace("[reflexd] harness errored", status, 1)
 
         self._note_outcome(reply)
+        if _is_limit(reply) and (getattr(self.adapter, "limited_until", 0.0) or 0.0) > time.time():
+            # This turn is the one that hit the limit: it got no answer either.
+            self._park_for_reset(relay, envelope, triage)
+            if envelope.get("limit_retry"):
+                # The vendor gave no reset and our guess was early: the room was
+                # told once already, so wait again quietly. A ⚠ every 30 min
+                # otherwise (live run, 2026-11-05).
+                logger.info("still out of quota room=%s; waiting again", room)
+                return
         self._alert_owner(room, reply, asked_by=envelope.get("from_name") or None)
 
         # Don't double-post: if the agent already posted this result itself
@@ -4548,6 +4690,7 @@ class Reflexd:
             has_workspace=has_workspace, worktree=worktree,
             from_agent=is_agent_participant(wake_sender),
             manual=room_mode == "manual",
+            can_run=harness == "codex",
             lead=lead_for(wake_room),
             owner=os.environ.get("REFLEXD_OWNER") or None,
             untrusted=(owner if room_mode != "default"
@@ -4561,6 +4704,13 @@ class Reflexd:
                                and trust_for(wake_room) == "members"
                                and not trusted_now),
         )
+        intent_blurb += reflexd_wake.other_mentions_line(
+            recent, self.config.participant_name, envelope_canonical_id(envelope) or "",
+            reflexd_triage._has_literal_mention)
+        if trusted_now:
+            limit, turn = _keep_going.max_turns(), _keep_going.turn_of(envelope)
+            intent_blurb += (_keep_going.resumed_note(turn, limit) if turn else "")
+            intent_blurb += _keep_going.instructions(limit - turn)
 
         memory_block = render_memory_context(memory_entries or [])
 

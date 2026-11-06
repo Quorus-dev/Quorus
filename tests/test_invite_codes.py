@@ -342,6 +342,34 @@ async def test_quorus_join_explains_a_taken_name(client, monkeypatch, tmp_path, 
     assert not (tmp_path / "joiner" / "config.json").exists()
 
 
+async def test_joining_a_teammates_relay_keeps_my_setup(client, monkeypatch, tmp_path,
+                                                        capsys) -> None:
+    """The joiner already runs Quorus on their own relay: the invite lands in a
+    profile of its own, their setup and MCP clients stay put, and they're in."""
+    import asyncio as _asyncio
+
+    from quorus.profiles import ProfileManager
+
+    mine = {"relay_url": "http://127.0.0.1:8080", "instance_name": "ivy", "api_key": "own"}
+    pm = ProfileManager(tmp_path / "joiner")
+    pm.save("default", mine)
+    pm.set_current("default")
+    payload = await _mint(client)
+    cli = _cli_against_relay(monkeypatch, tmp_path)
+    registered: list = []
+    monkeypatch.setattr(cli, "_register_mcp_everywhere",
+                        lambda **k: registered.append(k) or ([], {}))
+
+    await _asyncio.to_thread(cli._apply_join_payload, {**payload, "r": "http://t"}, "ivy")
+    assert pm.current() == "default" and pm.get("default") == mine
+    joined = pm.get("t")
+    assert joined["relay_url"] == "http://t" and joined["api_key"].startswith("quorus_pk_")
+    assert registered == []
+    assert "QUORUS_PROFILE=t quorus say build" in capsys.readouterr().out
+    members = (await client.get("/rooms/build", headers=ADMIN)).json()["members"]
+    assert "ivy" in members
+
+
 async def test_the_owner_lists_and_revokes_invites_without_seeing_codes(client) -> None:
     r = await client.post("/v1/join/mint", json={"room": "build", "max_uses": 3}, headers=ADMIN)
     inv_id = r.json()["invite_id"]

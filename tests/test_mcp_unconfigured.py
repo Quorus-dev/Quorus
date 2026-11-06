@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -40,22 +43,52 @@ def test_an_unconfigured_plugin_explains_the_setup_instead_of_closing(tmp_path) 
         "QUORUS_RELAY_SECRET": "", "QUORUS_API_KEY": "",
     }
     (tmp_path / "home").mkdir()
-    requests = "\n".join([
-        _rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
-                               "clientInfo": {"name": "t", "version": "1"}}),
-        _rpc(None, "notifications/initialized"),
-        _rpc(2, "tools/call", {"name": "list_rooms", "arguments": {}}),
-    ]) + "\n"
     proc = subprocess.Popen([sys.executable, "-m", "quorus_mcp.server"], env=env,
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True)
+    lines: queue.Queue[str] = queue.Queue()
+    threading.Thread(target=lambda: [lines.put(ln) for ln in proc.stdout],
+                     daemon=True).start()
+    err_chunks: list[str] = []  # drained alongside, so a chatty stderr can't block
+    err_reader = threading.Thread(target=lambda: err_chunks.append(proc.stderr.read()),
+                                  daemon=True)
+    err_reader.start()
+    replies: dict = {}
+    out = ""
+
+    def send_and_wait(msg: str, want: int | None) -> None:
+        # Wait for each reply before closing stdin: the server stops reading at
+        # EOF and could exit before it answered the tool call (CI flake, 0.7.16).
+        nonlocal out
+        proc.stdin.write(msg + "\n")
+        proc.stdin.flush()
+        deadline = time.monotonic() + 60
+        while want is not None and want not in replies and time.monotonic() < deadline:
+            try:
+                ln = lines.get(timeout=0.5)
+            except queue.Empty:
+                if proc.poll() is not None:
+                    return
+                continue
+            out += ln
+            if ln.strip():
+                m = json.loads(ln)
+                if "id" in m:
+                    replies[m["id"]] = m
+
     try:
-        out, err = proc.communicate(requests, timeout=60)
+        send_and_wait(_rpc(1, "initialize", {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "t", "version": "1"}}), 1)
+        send_and_wait(_rpc(None, "notifications/initialized"), None)
+        send_and_wait(_rpc(2, "tools/call", {"name": "list_rooms", "arguments": {}}), 2)
+        proc.stdin.close()
+        proc.wait(timeout=30)
     finally:
         if proc.poll() is None:
             proc.kill()
-    replies = {m["id"]: m for m in (json.loads(ln) for ln in out.splitlines() if ln.strip())
-               if "id" in m}
+    err_reader.join(timeout=10)
+    err = "".join(err_chunks)
     assert 1 in replies, f"no initialize reply; stderr: {err[-600:]}"
     instructions = replies[1]["result"]["instructions"]
     assert instructions.startswith("Quorus isn't set up for this session yet")

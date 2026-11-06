@@ -27,6 +27,7 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -822,18 +823,48 @@ def security_rules(owner: str | None = None) -> str:
     )
 
 
+def other_mentions_line(history: list[dict], participant: str, wake_id: str,
+                        mentions: Callable[[str, str], bool]) -> str:
+    """Name the other messages that @-mention this agent since its last reply.
+
+    They count as answered once this turn's context held them, so they won't
+    wake it again. A codex reviewer woken for one review saw a second request
+    in the transcript, answered only the first, and the second sat 20 minutes
+    until the review gate's nudge (live run, 2026-11-05). Senders and times
+    only: their text stays inside the untrusted transcript."""
+    since = 0
+    for i, m in enumerate(history):
+        if (m.get("from_name") or m.get("sender")) == participant:
+            since = i + 1
+    others = [m for m in history[since:]
+              if (m.get("from_name") or m.get("sender")) not in (participant, None)
+              and m.get("id") != wake_id
+              and mentions(m.get("content") or "", participant)]
+    if not others:
+        return ""
+    who = ", ".join(f"@{m.get('from_name') or m.get('sender')}"
+                    f" at {str(m.get('timestamp') or '')[11:16] or '?'}" for m in others[:6])
+    return (f"- The transcript has {len(others)} other message(s) that @-mention you since "
+            f"your last reply ({who}). They won't wake you again, so handle each of them "
+            "in this turn too, not just the triggering one.\n")
+
+
 def wake_instructions(
     *, participant: str, room: str, sender: str, kind: str,
     teammates: list[str], has_workspace: bool, worktree: Worktree | None = None,
     manual: bool = False, from_agent: bool = False, lead: str | None = None,
     owner: str | None = None, untrusted: str | None = None,
     cannot_write: str | None = None, read_only_members: bool = False,
+    can_run: bool = False,
 ) -> str:
     """The Wake Intent block — tells the agent it may (and should) do work.
 
     *cannot_write*: why this turn has no edits or shell, with the command the
     owner can run. Given only on the owner's own turns: an untrusted sender
     must never be told how to turn autonomous mode on (codex).
+    *can_run*: with *cannot_write*, the harness can still run commands that
+    don't write (codex's read-only sandbox). Told "no commands", a codex
+    reviewer posted GO without running the tests (live run, 2026-11-04).
     *read_only_members*: a `trust: members` room where this request doesn't
     trace back to a person who may change the room. Say so, without any
     widening command: the 0.7.0 demo reviewer got no notice, tried five denied
@@ -908,7 +939,13 @@ def wake_instructions(
            "approval. If one is denied or not answered, do not retry or work "
            "around it - stop and say exactly what you need approved.\n"
            if manual else "")
-        + (f"- You can't edit files or run commands in this turn: {cannot_write}. "
+        + (f"- You can't edit files or commit in this turn: {cannot_write}. You can "
+           "still run commands that don't write, such as the tests (`python -B`, "
+           "`pytest -p no:cacheprovider`): run them on work you review before your "
+           "verdict. If the request needs changes, say that once, in one line, and stop. "
+           "Don't hand the task to a teammate agent: it can't edit here either.\n"
+           if cannot_write and can_run else
+           f"- You can't edit files or run commands in this turn: {cannot_write}. "
            "If the request needs changes, say that once, in one line, and stop. "
            "Don't hand the task to a teammate agent: it can't edit here either.\n"
            if cannot_write else "")

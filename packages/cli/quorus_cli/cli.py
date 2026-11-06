@@ -5312,12 +5312,17 @@ def _cmd_join(args):
             config["api_key"] = api_key
         else:
             config["relay_secret"] = secret
-        _write_sensitive_json(config_path, config)
-        # (atomic 0600 write via _write_sensitive_json)
-        console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]")
+        from quorus_cli import join_config
+        saved = join_config.save(config, config_dir)
+        if not saved.current:
+            _say_saved_as_profile(saved, room)
+        else:
+            console.print(f"[green]Config written to {config_path} (permissions: 0600)[/green]"
+                          if saved.slug is None
+                          else f"[green]Profile '{saved.slug}' updated[/green]")
 
-    # 2. Register MCP server with Claude Code (only if setting up fresh)
-    if need_fresh_setup:
+    # 2. Register MCP server with Claude Code (only if this is now the setup)
+    if need_fresh_setup and saved.current:
         from quorus_cli.mcp_writers import McpEnv, register_one
 
         mcp_cmd, mcp_args = _mcp_server_command()
@@ -5750,6 +5755,19 @@ def _redeem_invite(relay_url: str, code: str, name: str,
     return key
 
 
+def _say_saved_as_profile(saved, room: str) -> None:
+    """Tell the user where a join to another relay went, and how to use it."""
+    from quorus_cli.profile_cmd import _relay_label
+
+    before = saved.previous
+    console.print(f"[green]Saved as profile '{saved.slug}'.[/green] Your setup "
+                  f"({before.get('instance_name', '?')} on "
+                  f"{_relay_label(before.get('relay_url'))}) and your agents' MCP "
+                  "config are unchanged.")
+    console.print(f"[dim]Post there: QUORUS_PROFILE={saved.slug} quorus say {room} \"hi\"\n"
+                  f"Switch to it: quorus profile use {saved.slug}[/dim]")
+
+
 def _apply_join_payload(payload: dict, name: str) -> None:
     """Write config, register MCP, join room, print the welcome.
 
@@ -5848,6 +5866,12 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                     pass
         except Exception as exc:
             console.print(f"[yellow]Warning: signup failed: {exc}[/yellow]")
+        if not api_key:
+            # Saving a setup with no key left the user unable to post, and
+            # every later command failed somewhere less clear than here.
+            _ui.error("This relay didn't give you a key, so nothing was saved",
+                      hint="ask your teammate for a fresh code: quorus share <room>")
+            sys.exit(4)
 
     # Reuse join logic
     repo_dir = Path(__file__).resolve().parent.parent
@@ -5866,28 +5890,31 @@ def _apply_join_payload(payload: dict, name: str) -> None:
         config["api_key"] = api_key
     else:
         config["relay_secret"] = secret
-    config_path = config_dir / "config.json"
-    _write_sensitive_json(config_path, config)
-    # (atomic 0600 write via _write_sensitive_json)
-    console.print(f"[green]Config written to {config_path}[/green]")
-
-    # 2. Register MCP server with every installed client (Claude Code,
-    # Claude Desktop, Cursor, Codex, Gemini CLI, Windsurf, Opencode,
-    # Continue). Shared logic with `quorus init` — every joiner gets
-    # the same full auto-register treatment, not just Claude Code.
+    from quorus_cli import join_config
+    saved = join_config.save(config, config_dir)
     del repo_dir, quorus_dir  # unused here; kept above for compat with old edits
-    mcp_command, mcp_args = _mcp_server_command()
-    from quorus_cli import ui as _reg_ui
+    agent_keys: dict = {}
+    if not saved.current:
+        _say_saved_as_profile(saved, room)
+    else:
+        console.print(f"[green]Config written to {config_dir / 'config.json'}[/green]"
+                      if saved.slug is None else f"[green]Profile '{saved.slug}' updated[/green]")
+        # 2. Register MCP server with every installed client (Claude Code,
+        # Claude Desktop, Cursor, Codex, Gemini CLI, Windsurf, Opencode,
+        # Continue). Shared logic with `quorus init` — every joiner gets
+        # the same full auto-register treatment, not just Claude Code.
+        mcp_command, mcp_args = _mcp_server_command()
+        from quorus_cli import ui as _reg_ui
 
-    _installed_platforms, agent_keys = _register_mcp_everywhere(
-        name=name,
-        relay_url=relay_url,
-        api_key=api_key,
-        mcp_command=mcp_command,
-        mcp_args=mcp_args,
-        ui=_reg_ui,
-        project_fallback=False,  # never a .mcp.json in the user's cwd
-    )
+        _installed_platforms, agent_keys = _register_mcp_everywhere(
+            name=name,
+            relay_url=relay_url,
+            api_key=api_key,
+            mcp_command=mcp_command,
+            mcp_args=mcp_args,
+            ui=_reg_ui,
+            project_fallback=False,  # never a .mcp.json in the user's cwd
+        )
 
     # 3. Join the room (human + all registered agents)
     async def _do_join():
@@ -6045,7 +6072,8 @@ def _apply_join_payload(payload: dict, name: str) -> None:
     ui.console.print(
         Panel(welcome, border_style="primary", padding=(0, 1))
     )
-    ui.hint_next_steps(_join_next_steps(room, invite.get("role") == "observer"))
+    if saved.current:
+        ui.hint_next_steps(_join_next_steps(room, invite.get("role") == "observer"))
 
 
 def _join_next_steps(room: str, observer: bool) -> list[str]:

@@ -57,7 +57,7 @@ def act(prompt, can_write):
         # What the real CLIs did on 0.6.0: hand the stranger's task to the other agent.
         return ("This request isn't from my owner, so this turn is read-only. "
                 "@%%s can you apply it?" %% OTHER)
-    if "can't edit files or run commands in this turn" in prompt:
+    if "can't edit files or " in prompt:
         cmd = re.search(r"`(quorus agent add [^`]+)`", prompt)
         return "I can't edit here: %%s" %% (cmd.group(1) if cmd else "no write access")
     if "fix the bug in calc.py" not in asked:
