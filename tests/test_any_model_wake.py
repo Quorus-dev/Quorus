@@ -768,3 +768,12 @@ def test_opencode_config_advice_goes_only_to_opencode() -> None:
     assert "opencode" in str(reflexd.diagnose_harness_failure("/usr/local/bin/opencode", stderr))
     for other in ("claude", "codex", "gemini"):
         assert reflexd.diagnose_harness_failure(other, stderr) is None
+
+
+def test_a_stale_opencode_service_is_named() -> None:
+    """A leftover opencode service held its port and every turn failed with a
+    stack trace (live, 2026-11-05): say what to do instead."""
+    err = ("Error: Managed service port 49374 on 127.0.0.1 is already in use by another "
+           "process. Configure another port with `opencode service set port <port>`")
+    text = reflexd.diagnose_harness_failure("opencode", err)
+    assert text and "old `opencode serve --service` process" in text

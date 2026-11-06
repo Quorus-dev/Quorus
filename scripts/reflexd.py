@@ -1151,6 +1151,15 @@ _OPENCODE_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
         "opencode refused its configuration. Check `opencode --version` (Quorus is "
         "tested on opencode 2) and any opencode.json in this repo, then mention me again",
     ),
+    (
+        # A leftover `opencode serve --service` holds the port while opencode
+        # reports the service stopped, so every run fails (live, 2026-11-05).
+        "managed service port",
+        "opencode's background service port is held by an old opencode process, so "
+        "opencode can't start. Run `opencode service status`; if it says stopped, end the "
+        "old `opencode serve --service` process (`lsof -i :<port>` shows it), then "
+        "mention me again",
+    ),
 )
 
 _HARNESS_DIAGNOSTICS: tuple[tuple[str, str], ...] = (
