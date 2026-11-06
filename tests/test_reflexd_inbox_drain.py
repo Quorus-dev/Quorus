@@ -959,3 +959,35 @@ def test_a_message_between_the_drain_and_the_stream_is_answered_at_once(
     monkeypatch.setattr(reflexd, "iter_sse_events", fake_sse)
     asyncio.run(asyncio.wait_for(daemon.run(), timeout=10))
     assert dispatched == ["m-gap"]
+
+
+def test_drain_skips_chatter_older_than_our_last_post(monkeypatch: pytest.MonkeyPatch) -> None:
+    """After a restart, jobs queued behind a long wake came back and the agent
+    spent a turn on each: "delayed message, no action" (rokan-build, 2026-11-05).
+    A room message older than our own latest post there, that doesn't @-mention
+    us, was already seen; a mention, a newer message or a DM still goes through."""
+    daemon = _make_daemon()
+    seen: list[str] = []
+
+    async def fake_dispatch(relay, event_name, data, background=False):
+        seen.append(data["message_id"])
+
+    monkeypatch.setattr(daemon, "_dispatch_event", fake_dispatch)
+
+    class Relay(FakeRelay):
+        async def fetch_recent(self, *, room: str, limit: int = 50):
+            return [{"from_name": SELF, "timestamp": "2026-11-05T03:14:41Z"}]
+
+    relay = Relay([[
+        {"id": "f1", "message_id": "old", "room": "r", "from_name": "arav",
+         "content": "✅ pushed", "timestamp": "2026-11-05T02:29:37Z"},
+        {"id": "f2", "message_id": "old-mention", "room": "r", "from_name": "arav-codex",
+         "content": "@arav-claude review?", "timestamp": "2026-11-05T02:20:00Z"},
+        {"id": "f3", "message_id": "new", "room": "r", "from_name": "arav",
+         "content": "next task", "timestamp": "2026-11-05T03:20:00Z"},
+        {"id": "f4", "message_id": "dm", "from_name": "arav", "content": "hi",
+         "timestamp": "2026-11-05T01:00:00Z"},
+    ]])
+    asyncio.run(daemon._drain_inbox(relay))
+    assert seen == ["old-mention", "new", "dm"]
+    assert "old" in daemon._handled_ids  # and it won't come back again

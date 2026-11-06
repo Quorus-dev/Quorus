@@ -1353,6 +1353,17 @@ def _parse_codex_json(out: str) -> str:
     return _parse_codex_stream(out)[0]
 
 
+def _parse_ts(ts: Any) -> datetime | None:
+    """ISO timestamp → aware datetime (naive counts as UTC); None if unparseable."""
+    if not isinstance(ts, str):
+        return None
+    try:
+        t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
 def _ts_after(ts: Any, start: datetime) -> bool:
     """True iff ISO timestamp *ts* is at/after *start* (unparseable → False)."""
     if not isinstance(ts, str):
@@ -5396,6 +5407,7 @@ class Reflexd:
         provides live delivery).
         """
         drained = 0
+        last_posts: dict[str, datetime | None] = {}
         while not self._stop.is_set():
             try:
                 messages, ack_token = await relay.fetch_inbox(
@@ -5409,6 +5421,9 @@ class Reflexd:
             for msg in messages:
                 if self._stop.is_set():
                     return
+                if await self._seen_before_restart(relay, msg, last_posts):
+                    self._mark_handled(msg.get("message_id") or msg.get("id") or "")
+                    continue
                 try:
                     # background: a drained job used to run inline, keeping the
                     # SSE reader deaf for a whole wake after every reconnect.
@@ -5443,6 +5458,33 @@ class Reflexd:
                 break
         if drained:
             logger.info("inbox drain: handled %d queued message(s)", drained)
+
+    async def _seen_before_restart(self, relay: RelayClient, msg: dict[str, Any],
+                                   last_posts: dict[str, datetime | None]) -> bool:
+        """A drained room message the agent already had its chance at: older than
+        its own latest post in that room, and not an @-mention of it. Jobs queued
+        behind a long wake come back after a restart (at-least-once), and the
+        agent spent a turn on each one saying "delayed message, no action" (15 in
+        rokan-build on 2026-11-05). @-mentions still go through, and the wake
+        names any others it should answer."""
+        room, name = msg.get("room") or "", self.config.participant_name
+        if not room or msg.get("from_name") == name or reflexd_triage._has_literal_mention(
+                msg.get("content") or "", name):
+            return False
+        if room not in last_posts:
+            try:
+                recent = await relay.fetch_recent(room=room, limit=50)
+            except Exception:
+                recent = []
+            mine = [m.get("timestamp") for m in recent if m.get("from_name") == name]
+            last_posts[room] = _parse_ts(mine[-1]) if mine else None
+        posted = last_posts[room]
+        sent = _parse_ts(msg.get("timestamp"))
+        if posted is None or sent is None or sent >= posted:
+            return False
+        logger.info("drain: skipping %s, older than our last post in room=%s",
+                    msg.get("id") or msg.get("message_id"), room)
+        return True
 
     async def _periodic_drain(
         self, relay: RelayClient, interval: float = DRAIN_INTERVAL_S,
