@@ -2864,6 +2864,12 @@ class Reflexd:
         # own @mentions queued for an hour (overseer, fix 16).
         self._pace_parked: dict[str, tuple[dict[str, Any], Any]] = {}
         self._pace_task: asyncio.Task | None = None
+        # Messages that arrived while the vendor's quota was out, newest per
+        # room, woken for once it resets. The pause line promised "will pick up
+        # again then" while nothing did: ~330 of arav-codex's wakes were
+        # dropped this way, 287 on 2026-10-28 alone (overseer, 2026-11-05).
+        self._limit_parked: dict[str, tuple[dict[str, Any], Any]] = {}
+        self._limit_task: asyncio.Task | None = None
         self._readonly_warned: set[str] = set()  # worktrees told "stuck marker"
         # Unfinished-turn holds whose marker couldn't be written: still honoured
         # by this process (the marker is what survives a restart).
@@ -3540,9 +3546,10 @@ class Reflexd:
         except OSError as exc:
             logger.warning("could not refresh agent identity: %s", exc)
 
-    async def _limited(self, relay: RelayClient, envelope: dict[str, Any]) -> bool:
+    async def _limited(self, relay: RelayClient, envelope: dict[str, Any],
+                       triage: Any = None) -> bool:
         """While the vendor's quota is out, don't wake the agent: say so once
-        per room, then stay quiet until it resets."""
+        per room, keep the message, and wake for it when the pause ends."""
         until = getattr(self.adapter, "limited_until", 0.0) or 0.0
         if until <= time.time():
             return False
@@ -3553,7 +3560,38 @@ class Reflexd:
             # 04:33" to a room reading it in Toronto (2026-10-17).
             await self._post_status(relay, room, envelope, self._pause_line(until))
         logger.info("skipping wake: harness paused until %s", until)
+        self._park_for_reset(relay, envelope, triage)
         return True
+
+    def _park_for_reset(self, relay: RelayClient, envelope: dict[str, Any],
+                        triage: Any) -> None:
+        """Hold the newest message per room until the pause ends. One wake per
+        room is enough: the wake reads the room, so it sees what came before."""
+        self._limit_parked[envelope.get("room") or ""] = (envelope, triage)
+        if self._limit_task is None or self._limit_task.done():
+            self._limit_task = asyncio.get_running_loop().create_task(
+                self._release_limited(relay))
+
+    async def _release_limited(self, relay: RelayClient) -> None:
+        """Sleep out the pause (it may be extended meanwhile), then wake once
+        per parked room. A wake that hits the limit again parks itself again."""
+        while not self._stop.is_set():
+            left = (getattr(self.adapter, "limited_until", 0.0) or 0.0) - time.time()
+            if left > 0:
+                await self._sleep_or_stop(min(left + 1.0, PACE_RECHECK_S))
+                continue
+            parked, self._limit_parked = self._limit_parked, {}
+            if not parked:
+                return
+            logger.info("pause over — waking for %d room(s) parked meanwhile", len(parked))
+            for envelope, triage in parked.values():
+                if self._stop.is_set():
+                    return
+                try:
+                    async with self._wake_lock:
+                        await self._wake_and_reply(relay, envelope, triage=triage)
+                except Exception as exc:  # one bad wake mustn't strand the rest
+                    logger.exception("wake after the pause failed: %s", exc)
 
     def _pause_line(self, until: float) -> str:
         """The vendor's reset when it gave one; our retry, marked "?", when not;
@@ -3618,7 +3656,7 @@ class Reflexd:
         if not self.config.spawn_enabled:
             logger.info("spawn disabled (test mode); skipping harness call")
             return
-        if await self._limited(relay, envelope):
+        if await self._limited(relay, envelope, triage):
             incoming = _failover.continuation(envelope)
             if (_handoff_sender.enabled(room, ROOM_BINDINGS_PATH) and incoming
                     and incoming.get("capsule")):
@@ -4165,6 +4203,9 @@ class Reflexd:
             reply = reply.replace("[reflexd] harness errored", status, 1)
 
         self._note_outcome(reply)
+        if _is_limit(reply) and (getattr(self.adapter, "limited_until", 0.0) or 0.0) > time.time():
+            # This turn is the one that hit the limit: it got no answer either.
+            self._park_for_reset(relay, envelope, triage)
         self._alert_owner(room, reply, asked_by=envelope.get("from_name") or None)
 
         # Don't double-post: if the agent already posted this result itself
