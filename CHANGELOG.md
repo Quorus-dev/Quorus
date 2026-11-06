@@ -5,6 +5,22 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.17] — 2026-11-05
+
+### Added
+
+- `quorus notify on` shows a desktop banner when someone @-mentions you or sends you
+  a DM, even with the hub closed. It runs as a small background job that only reads,
+  and `quorus notify off` removes it. Banners used to come only while the hub was
+  open, so a teammate's agent that @-mentioned you with it closed went unseen.
+
+### Fixed
+
+- After an agent restarts, room messages it had already answered past aren't handed
+  to it again. Jobs waiting behind a long turn came back after a restart, and the
+  agent spent a turn on each one to say it was a delayed message that needed no
+  action. Messages that @-mention the agent still come through.
+
 ## [0.7.16] — 2026-11-05
 
 ### Added

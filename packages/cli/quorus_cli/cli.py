@@ -1370,6 +1370,12 @@ def _cmd_agent(args):
     cmd_agent(args, console)
 
 
+def _cmd_notify(args):
+    from quorus_cli.notify_cmd import cmd_notify
+
+    cmd_notify(args, console)
+
+
 def _cmd_web(args):
     from quorus_cli.web_cmd import cmd_web
 
@@ -9069,6 +9075,10 @@ def main():
         "notify-test",
         help="Fire a test OS notification (verifies your desktop notification setup)",
     )
+    p_notify = sub.add_parser(
+        "notify", help="Desktop banners for your @-mentions and DMs, even with the hub closed")
+    p_notify.add_argument("notify_action", nargs="?", choices=["on", "off", "status"],
+                          default="status")
 
     p_invite_link = sub.add_parser(
         "invite-link", help="A join command holding the relay secret, for your own machines"
@@ -10130,6 +10140,7 @@ def main():
         "version": _cmd_version,
         "logs": _cmd_logs,
         "notify-test": _cmd_notify_test,
+        "notify": _cmd_notify,
         "join": _cmd_join,
         "share": _cmd_share,
         "quickjoin": _cmd_quickjoin,
