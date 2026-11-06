@@ -3225,6 +3225,10 @@ class Reflexd:
         """One wake, shown to the room as presence ``busy`` while it runs:
         before this, nobody could tell a working agent from a dead one
         until its reply landed (sometimes minutes later)."""
+        if (_keep_going.is_stop_command(envelope.get("content") or "")
+                and not is_agent_participant(envelope.get("from_name") or "")):
+            await self._stop_keep_going(relay, envelope)
+            return
         mid = envelope_canonical_id(envelope) or ""
         if mid and self._attempt(mid) > MAX_WAKE_ATTEMPTS:
             # A wake that never finished (hung harness, crash, restart) was
@@ -3274,13 +3278,31 @@ class Reflexd:
         self._keep_going_tasks[room] = asyncio.get_running_loop().create_task(
             self._keep_going_turn(relay, nxt, triage))
 
+    async def _stop_keep_going(self, relay: RelayClient, envelope: dict[str, Any]) -> None:
+        """A person posted /stop: end this room's run now, with no turn for it."""
+        room = envelope.get("room") or ""
+        task = self._keep_going_tasks.pop(room, None)
+        if task is None or task.done() or task is asyncio.current_task():
+            logger.info("/stop in room=%s: no run of turns to stop", room)
+            return
+        task.cancel()
+        await self._post_status(
+            relay, room, envelope,
+            f"@{self.config.participant_name} stopped: @{envelope.get('from_name') or '?'} "
+            "posted /stop. Its work so far stays on its branch, unpublished")
+
     async def _keep_going_turn(self, relay: RelayClient, envelope: dict[str, Any],
                                triage: Any) -> None:
         await self._sleep_or_stop(_keep_going.GAP_S)
         if self._stop.is_set():
             return
         room = envelope.get("room") or ""
-        since = datetime.fromisoformat(envelope["continue_since"])
+        try:  # a relay timestamp ends in Z, which 3.10's fromisoformat refuses
+            since = datetime.fromisoformat(str(envelope["continue_since"]).replace("Z", "+00:00"))
+        except ValueError:
+            since = datetime.now(timezone.utc)
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
         try:
             recent = await relay.fetch_recent(room=room, limit=50)
         except Exception:

@@ -26,6 +26,7 @@ _CONTINUE_LINE = re.compile(r"(?mi)^[ \t]*/continue[ \t.]*$")
 # opencode on a free model did, and got no next turn (live run, 2026-11-05).
 _CONTINUE_LAST = re.compile(r"(?i)[ \t]*(?:,?[ \t]*so[ \t]+)?/continue[ \t.!]*\Z")
 _STOP = re.compile(r"(?i)(?:^|\s)/stop\b")
+_MENTION = re.compile(r"@[\w.-]+")
 
 
 def max_turns() -> int:
@@ -57,9 +58,19 @@ def turn_of(envelope: dict[str, Any]) -> int:
 
 def next_envelope(envelope: dict[str, Any], since: str) -> dict[str, Any]:
     """The same request again, one turn further. Same ids, so trust, session and
-    worktree are the original's; *since* is when the run of turns began."""
+    worktree are the original's. A ``/stop`` posted after the request counts: the
+    run is timed from the request, else from *since* (when the run began). Timed
+    from the run, a /stop posted 40 s before opencode's run began missed it."""
     return {**envelope, "continue_turn": turn_of(envelope) + 1,
-            "continue_since": envelope.get("continue_since") or since}
+            "continue_since": (envelope.get("continue_since") or envelope.get("timestamp")
+                               or since)}
+
+
+def is_stop_command(content: str) -> bool:
+    """A message that is only ``/stop`` (maybe with @-mentions): the daemon acts
+    on it and wakes nobody. Woken by it, every agent spent a turn saying
+    "Stopped.", and that clean finish queued the half-done work for review."""
+    return _MENTION.sub("", content or "").strip().lower().rstrip(".!") == "/stop"
 
 
 def instructions(turns_left: int) -> str:

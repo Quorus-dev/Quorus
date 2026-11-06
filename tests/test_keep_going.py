@@ -209,3 +209,41 @@ def test_other_mentions_since_the_last_reply_are_named(monkeypatch, tmp_path) ->
     assert "other message(s)" not in d._build_prompt(env, history[:2] + history[3:],
                                                      has_workspace=True, trusted=False,
                                                      harness="codex")
+
+
+def test_a_bare_stop_wakes_nobody_and_ends_the_run(monkeypatch, tmp_path) -> None:
+    """Woken by "/stop", agents each spent a turn saying "Stopped.", and that
+    clean finish queued half-done work for review (live run, 2026-11-05)."""
+    assert keep_going.is_stop_command("/stop")
+    assert keep_going.is_stop_command("@kg-claude /stop.")
+    assert not keep_going.is_stop_command("/stop the parser from crashing, please")
+    d, relay = _daemon(monkeypatch, tmp_path), _Relay()
+    monkeypatch.setattr(keep_going, "GAP_S", 0.3)
+    runs: list[int] = []
+
+    async def run(*_a, **_k) -> str:
+        runs.append(1)
+        return "step done\n/continue"
+
+    monkeypatch.setattr(d.adapter, "run", run)
+    env = {"id": "m1", "message_id": "m1", "room": "build", "from_name": "arav",
+           "content": "@arav-codex build it", "message_type": "chat"}
+    stop = {"id": "s1", "message_id": "s1", "room": "build", "from_name": "arav",
+            "content": "/stop", "message_type": "chat"}
+
+    async def scenario() -> None:
+        async with d._wake_lock:
+            await d._wake_and_reply(relay, env, reason="t")
+        async with d._wake_lock:
+            await d._wake_and_reply(relay, stop, reason="t")
+        await asyncio.sleep(0.6)
+
+    asyncio.run(scenario())
+    assert runs == [1]  # no turn for the /stop, and no next turn
+    assert any("@arav posted /stop" in t for t in _texts(relay))
+
+
+def test_a_stop_posted_after_the_request_counts() -> None:
+    env = {"id": "m", "timestamp": "2026-11-05T02:22:49Z"}  # relay style, with Z
+    assert keep_going.next_envelope(env, "2026-11-05T02:23:56Z")["continue_since"] \
+        == "2026-11-05T02:22:49Z"
