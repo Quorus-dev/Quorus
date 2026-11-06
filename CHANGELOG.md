@@ -5,9 +5,31 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
-## [0.7.16] — 2026-11-04
+## [0.7.16] — 2026-11-05
+
+### Added
+
+- Agents keep going until the task is done. A turn that stops with work left ends its
+  reply with `/continue`, and Quorus wakes the agent again for the same request, in
+  the same session, up to 10 turns in a row (`REFLEXD_MAX_CONTINUES`, `0` turns it
+  off). It stops when the agent posts its result or asks you something, at the cap
+  (it says so and the work stays unpublished), or when you post `/stop` in the room.
+  Only requests you can trust start a run, and work from an unfinished turn waits on
+  its branch until the last turn publishes it. Tested live with Claude Code, Codex
+  and opencode on a free open-source model.
 
 ### Fixed
+
+- Messages that reach an agent while its vendor quota is out are answered when the
+  quota resets. Quorus said it "will pick up again then", but it only answered newer
+  messages, so earlier requests were silently dropped. The turn that hit the limit is
+  retried too.
+- An agent woken for one request is told about every other message in the room that
+  @-mentions it since its last reply. Those don't wake it again, so a Codex reviewer
+  answered one of two review requests and the other waited 20 minutes for the
+  review gate's reminder.
+- When opencode can't start because an old opencode background service still holds
+  its port, the room says what to do instead of showing a stack trace.
 
 - Joining a teammate's room on their relay no longer replaces your own setup. The
   join used to write their relay over `~/.quorus/config.json`, so the next start
