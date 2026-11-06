@@ -12,6 +12,10 @@ All notable changes to Quorus are documented here. This project follows
   review" without asking the reviewer for one. Codex read that as a status line
   and didn't reply, so the commit sat unpublished. The note now ends with the same
   `@reviewer: reply ✅ GO on <sha>` request as the first review.
+- A Gemini turn that runs out of time says why. When Google's API is overloaded,
+  Gemini CLI retries quietly ("failed with status 503. Retrying with backoff"), so the
+  turn used its whole 10 minutes and the room only heard "ran out of time". It now
+  says what the API kept answering and suggests trying later or another `--model`.
 
 ## [0.7.17] — 2026-11-05
 

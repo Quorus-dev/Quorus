@@ -73,3 +73,31 @@ def test_a_child_holding_the_pipes_after_exit_is_killed(tmp_path: Path, monkeypa
     assert time.time() - start < 10
     time.sleep(0.3)
     assert not _alive(pid)
+
+
+def test_a_gemini_timeout_says_what_the_api_kept_answering(tmp_path: Path,
+                                                           monkeypatch) -> None:
+    """Live, 2026-11-06: Google answered 503 "high demand" and Gemini CLI retried
+    quietly for the whole 10 min; the room only heard "ran out of time"."""
+    exe = tmp_path / "gemini"
+    exe.write_text("#!/bin/sh\n"
+                   "echo 'Attempt 1 failed with status 503. Retrying with backoff...' >&2\n"
+                   "echo 'Attempt 2 failed with status 503. Retrying with backoff...' >&2\n"
+                   "sleep 60\n")
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    adapter = reflexd.HeadlessAdapter(timeout_s=1)
+    out = asyncio.run(adapter._run_subprocess(["gemini"], parser=lambda s: s, timeout_s=2))
+    assert out == "[reflexd] harness timed out"
+    assert adapter.timeout_cause is not None and "503" in adapter.timeout_cause
+    line = reflexd._timed_out_line(cause=adapter.timeout_cause)
+    assert line.startswith("⚠ ran out of time before finishing its reply: Google's API kept "
+                           "answering 503 (the model is overloaded)")
+    assert "--model" in line
+
+
+def test_timeout_cause_stays_quiet_without_evidence() -> None:
+    assert reflexd.timeout_cause("gemini", "") is None
+    assert reflexd.timeout_cause("gemini", "Loaded cached credentials.") is None
+    # Gemini CLI's retry line is its own; other harnesses keep the generic line.
+    assert reflexd.timeout_cause("codex", "Attempt 1 failed with status 503") is None
