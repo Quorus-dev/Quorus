@@ -179,3 +179,33 @@ def test_disabled_with_zero(monkeypatch, tmp_path) -> None:
     d, relay = _daemon(monkeypatch, tmp_path), _Relay()
     assert len(_run(d, relay, ["more\n/continue"], monkeypatch)) == 1
     assert not any("stopped after" in t for t in _texts(relay))
+
+
+def test_a_marker_ending_the_last_sentence_counts() -> None:
+    """opencode on a free model wrote it inline and got no next turn (live run)."""
+    reply = "✅ test_shout fixed. One function left (initials), so /continue."
+    assert keep_going.asks_to_continue(reply)
+    assert keep_going.strip_marker(reply) == "✅ test_shout fixed. One function left (initials)."
+    assert not keep_going.asks_to_continue("use /continue when more is left, then stop")
+
+
+def test_other_mentions_since_the_last_reply_are_named(monkeypatch, tmp_path) -> None:
+    """A codex reviewer answered one review request and the second, already in its
+    transcript, counted as answered: it sat 20 minutes (live run, 2026-11-05)."""
+    d = _daemon(monkeypatch, tmp_path)
+    history = [
+        {"id": "a", "from_name": "kg-claude", "content": "@arav-codex review 1",
+         "timestamp": "2026-11-05T01:55:00Z"},
+        {"id": "b", "from_name": "arav-codex", "content": "GO on 1"},
+        {"id": "c", "from_name": "kg-claude", "content": "@arav-codex please review 3",
+         "timestamp": "2026-11-05T01:56:27Z"},
+        {"id": "w", "from_name": "kg-opencode", "content": "@arav-codex review mine"},
+    ]
+    env = {"id": "w", "from_name": "kg-opencode", "room": "build", "content": "@arav-codex review"}
+    text = d._build_prompt(env, history, has_workspace=True, trusted=False, harness="codex")
+    assert "1 other message(s) that @-mention you since your last reply (@kg-claude at 01:56)" \
+        in text
+    assert "please review 3" not in text.split("# Reply chain depth")[0]  # text stays fenced
+    assert "other message(s)" not in d._build_prompt(env, history[:2] + history[3:],
+                                                     has_workspace=True, trusted=False,
+                                                     harness="codex")

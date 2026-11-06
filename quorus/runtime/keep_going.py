@@ -22,6 +22,9 @@ DEFAULT_MAX_TURNS = 10
 GAP_S = 2.0  # before the next turn, so a /stop or a new message can land first
 
 _CONTINUE_LINE = re.compile(r"(?mi)^[ \t]*/continue[ \t.]*$")
+# Some models write it at the end of a sentence ("one left, so /continue."):
+# opencode on a free model did, and got no next turn (live run, 2026-11-05).
+_CONTINUE_LAST = re.compile(r"(?i)[ \t]*(?:,?[ \t]*so[ \t]+)?/continue[ \t.!]*\Z")
 _STOP = re.compile(r"(?i)(?:^|\s)/stop\b")
 
 
@@ -34,12 +37,14 @@ def max_turns() -> int:
 
 
 def asks_to_continue(reply: str) -> bool:
-    return bool(_CONTINUE_LINE.search(reply or ""))
+    text = (reply or "").rstrip()
+    return bool(_CONTINUE_LINE.search(text) or _CONTINUE_LAST.search(text))
 
 
 def strip_marker(reply: str) -> str:
     """The reply as the room should see it: without the ``/continue`` line."""
-    return _CONTINUE_LINE.sub("", reply or "").strip()
+    text = _CONTINUE_LINE.sub("", reply or "").rstrip()
+    return _CONTINUE_LAST.sub(".", text).rstrip(" ,") if _CONTINUE_LAST.search(text) else text
 
 
 def turn_of(envelope: dict[str, Any]) -> int:

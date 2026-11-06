@@ -4674,6 +4674,9 @@ class Reflexd:
                                and trust_for(wake_room) == "members"
                                and not trusted_now),
         )
+        intent_blurb += reflexd_wake.other_mentions_line(
+            recent, self.config.participant_name, envelope_canonical_id(envelope) or "",
+            reflexd_triage._has_literal_mention)
         if trusted_now:
             limit, turn = _keep_going.max_turns(), _keep_going.turn_of(envelope)
             intent_blurb += (_keep_going.resumed_note(turn, limit) if turn else "")
