@@ -5,6 +5,8 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.18] — 2026-11-06
+
 ### Fixed
 
 - A reviewed commit that has to be rebased gets its second review. When main moved
