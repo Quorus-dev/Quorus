@@ -5228,7 +5228,8 @@ class Reflexd:
                 return (f"{reflexd_wake.STATUS_PREFIX} {wt.main} moved after @{who}'s GO "
                         f"on {tip[:12]}; rebased to {new['tip'][:12]}, which needs a fresh "
                         f"review (git range-diff {res.before[:12]}..{tip[:12]} "
-                        f"{wt.main}..{new['tip'][:12]}); not on main")
+                        f"{wt.main}..{new['tip'][:12]}); not on main. "
+                        f"{_review_gate.review_ask(who, new['tip'])}")
             return status
         if res.status in ("behind", "not_tip"):
             return None  # the turn's own end re-holds the new tip

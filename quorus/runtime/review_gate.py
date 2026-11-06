@@ -370,8 +370,14 @@ def awaiting_status(pin: dict[str, str], tip: str, count: int, me: str = "") -> 
     # Say how to approve: a first-run reviewer was never told, so a "/vote approve"
     # or "LGTM" held the fix forever (gate-by-default slice C).
     return (f"{_STATUS} awaiting @{who}'s review of {tip[:12]} ({count} commit(s)); not on "
-            f"main. @{who}: reply `✅ GO on {tip[:12]}` to publish it, or "
-            f"`/disagree blocking` with why.")
+            f"main. {review_ask(who, tip)}")
+
+
+def review_ask(who: str, tip: str) -> str:
+    """The reviewer's cue. A rebase note that only said "needs a fresh review"
+    read as status: Codex chose NO_REPLY twice and the commit sat (live run,
+    2026-11-06)."""
+    return f"@{who}: reply `✅ GO on {tip[:12]}` to publish it, or `/disagree blocking` with why."
 
 
 def update_marker(runtime_dir: Path, repo: Path, branch: str, **fields: Any) -> None:

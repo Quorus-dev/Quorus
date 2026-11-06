@@ -5,6 +5,14 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A reviewed commit that has to be rebased gets its second review. When main moved
+  after the reviewer's GO, Quorus rebased the commit and said it "needs a fresh
+  review" without asking the reviewer for one. Codex read that as a status line
+  and didn't reply, so the commit sat unpublished. The note now ends with the same
+  `@reviewer: reply ✅ GO on <sha>` request as the first review.
+
 ## [0.7.17] — 2026-11-05
 
 ### Added
