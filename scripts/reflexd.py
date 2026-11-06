@@ -3654,6 +3654,7 @@ class Reflexd:
         """Hold the newest message per room until the pause ends. One wake per
         room is enough: the wake reads the room, so it sees what came before."""
         self._limit_parked[envelope.get("room") or ""] = (envelope, triage)
+        logger.info("parked room=%s until the pause ends", envelope.get("room") or "")
         if self._limit_task is None or self._limit_task.done():
             self._limit_task = asyncio.get_running_loop().create_task(
                 self._release_limited(relay))
@@ -3675,7 +3676,8 @@ class Reflexd:
                     return
                 try:
                     async with self._wake_lock:
-                        await self._wake_and_reply(relay, envelope, triage=triage)
+                        await self._wake_and_reply(relay, {**envelope, "limit_retry": True},
+                                                   triage=triage)
                 except Exception as exc:  # one bad wake mustn't strand the rest
                     logger.exception("wake after the pause failed: %s", exc)
 
@@ -4299,6 +4301,12 @@ class Reflexd:
         if _is_limit(reply) and (getattr(self.adapter, "limited_until", 0.0) or 0.0) > time.time():
             # This turn is the one that hit the limit: it got no answer either.
             self._park_for_reset(relay, envelope, triage)
+            if envelope.get("limit_retry"):
+                # The vendor gave no reset and our guess was early: the room was
+                # told once already, so wait again quietly. A ⚠ every 30 min
+                # otherwise (live run, 2026-11-05).
+                logger.info("still out of quota room=%s; waiting again", room)
+                return
         self._alert_owner(room, reply, asked_by=envelope.get("from_name") or None)
 
         # Don't double-post: if the agent already posted this result itself

@@ -23,7 +23,8 @@ All notable changes to Quorus are documented here. This project follows
 - Messages that reach an agent while its vendor quota is out are answered when the
   quota resets. Quorus said it "will pick up again then", but it only answered newer
   messages, so earlier requests were silently dropped. The turn that hit the limit is
-  retried too.
+  retried too, and a retry that finds the quota still out waits again without posting
+  another warning.
 - An agent woken for one request is told about every other message in the room that
   @-mentions it since its last reply. Those don't wake it again, so a Codex reviewer
   answered one of two review requests and the other waited 20 minutes for the

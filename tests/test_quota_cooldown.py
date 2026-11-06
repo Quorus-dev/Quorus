@@ -228,3 +228,36 @@ def test_the_turn_that_hits_the_limit_is_retried_after_it(monkeypatch) -> None:
         d._limit_task.cancel()
 
     asyncio.run(scenario())
+
+
+def test_a_retry_that_hits_the_limit_again_waits_quietly(monkeypatch) -> None:
+    """No reset time from the vendor, so the 30-minute guess was early: the retry
+    hit the limit again and posted a second ⚠ (live run, 2026-11-05)."""
+    d = reflexd.Reflexd(reflexd.ReflexdConfig(relay_url="http://r", api_key="k",
+                                              participant_name="a-codex"))
+
+    async def hits_limit(*_a: Any, **_k: Any) -> str:
+        d.adapter.limited_until = time.time() + 600
+        return "⚠ codex: the vendor reports the account's usage limit has been reached."
+
+    class Relay(_Relay):
+        def __getattr__(self, _name):
+            async def anything(*_a, **_k):
+                return {}
+            return anything
+
+    monkeypatch.setattr(d.adapter, "run", hits_limit)
+    relay = Relay()
+    env = {"id": "m", "message_id": "m", "room": "build", "from_name": "arav",
+           "content": "@a-codex hi", "message_type": "chat"}
+
+    async def scenario() -> None:
+        await d._wake_and_reply(relay, env, reason="t")
+        first = len(relay.posted)
+        d.adapter.limited_until = 0.0
+        await d._wake_and_reply(relay, {**env, "limit_retry": True}, reason="t")
+        assert len(relay.posted) == first  # nothing new in the room
+        assert list(d._limit_parked) == ["build"]  # and it waits again
+        d._limit_task.cancel()
+
+    asyncio.run(scenario())
