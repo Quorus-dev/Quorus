@@ -1393,13 +1393,42 @@ def _undelivered_lines(reply: str, posted: list[str]) -> list[str]:
     return out
 
 
-def _timed_out_line(last_step: str = "") -> str:
+def _timed_out_line(last_step: str = "", cause: str | None = None) -> str:
     """What the room sees instead of the raw "[reflexd] harness timed out".
     With the last live step it says where the time went ("while searching the
-    code"), so a stuck agent says why instead of just that it stopped."""
+    code"), so a stuck agent says why instead of just that it stopped. With a
+    *cause* (`timeout_cause`) it says what the vendor kept answering."""
+    if cause:
+        return f"⚠ ran out of time before finishing its reply: {cause}"
     where = f" while {last_step}," if last_step else ""
     return (f"⚠ ran out of time{where} before finishing its reply. "
             "Mention me to continue.")
+
+
+# Gemini CLI retries a failing API call quietly ("Attempt 2 failed with status
+# 503. Retrying with backoff..."), so a turn on an overloaded model sat the whole
+# 10 min and the room only heard "ran out of time" (live, 2026-11-06).
+_GEMINI_RETRY_RE = re.compile(r"Attempt \d+ failed with status (\d{3})")
+_RETRY_STATUS = {
+    "503": "Google's API kept answering 503 (the model is overloaded)",
+    "429": "Google's API kept answering 429 (rate limited)",
+    "500": "Google's API kept answering 500 (server error)",
+}
+
+
+def timeout_cause(harness: str, stderr: str) -> str | None:
+    """Why a timed-out turn ran out of time, from the stderr it left, or None."""
+    if Path(harness).name != "gemini":
+        return None
+    diagnosis = diagnose_harness_failure(harness, stderr)
+    if diagnosis:
+        return diagnosis
+    codes = _GEMINI_RETRY_RE.findall(stderr or "")
+    if not codes:
+        return None
+    said = _RETRY_STATUS.get(codes[-1], f"Google's API kept answering {codes[-1]}")
+    return (f"{said}, and Gemini CLI retried until the time ran out. Mention me to try "
+            "again later, or add me again with another `--model`.")
 
 
 def _same_result(posted: str, reply: str) -> bool:
@@ -1490,15 +1519,17 @@ async def _reap(proc: Any, timeout: float = 10.0) -> None:
 
 async def _collect(
     proc: Any, on_line: Callable[[bytes], None] | None,
-    first_out: asyncio.Event | None = None,
+    first_out: asyncio.Event | None = None, err: bytearray | None = None,
 ) -> tuple[bytes, bytes]:
     """``proc.communicate()``, but each stdout line also goes to *on_line* as it
     arrives, so the room sees the agent's steps live instead of after the turn.
-    *first_out* is set when the first stdout bytes arrive."""
-    if (on_line is None and first_out is None) or not isinstance(
+    *first_out* is set when the first stdout bytes arrive. *err*, when given,
+    fills with stderr as it arrives, so a timeout can still read it."""
+    if (on_line is None and first_out is None and err is None) or not isinstance(
             getattr(proc, "stdout", None), asyncio.StreamReader):
         return await proc.communicate()
-    out, err = bytearray(), bytearray()
+    out = bytearray()
+    err = err if err is not None else bytearray()
 
     async def drain_out() -> None:
         pending, skip = b"", False
@@ -1583,6 +1614,8 @@ class HeadlessAdapter:
         self.usage: dict[str, Any] = {}
         self.turn_tokens: int | None = None
         self._turn_usage_unknown = False
+        # Why the last timed-out turn ran out of time, when its stderr says.
+        self.timeout_cause: str | None = None
         self.harness_versions: dict[str, str | None] = {}
         # Set by Reflexd: called with "editing relay.py"-style steps parsed
         # from the harness's JSON stream while a wake runs.
@@ -1643,6 +1676,7 @@ class HeadlessAdapter:
         # missing at startup. ``is_stub_mode`` consults both.
         self.turn_tokens = None
         self._turn_usage_unknown = False
+        self.timeout_cause = None
         if is_stub_mode():
             return self._stub_reply(context)
         if self.dry_run:
@@ -2109,7 +2143,9 @@ class HeadlessAdapter:
             return f"[reflexd] {argv[0]} could not start ({exc.strerror})"
         budget = timeout_s or self.timeout_s
         first = asyncio.Event() if first_output_s else None
-        collecting = asyncio.ensure_future(_collect(proc, self._step_handler(), first))
+        err_seen = bytearray()
+        collecting = asyncio.ensure_future(
+            _collect(proc, self._step_handler(), first, err_seen))
         try:
             if first is not None:
                 # A free model can sit minutes before its first token (nemotron:
@@ -2139,6 +2175,8 @@ class HeadlessAdapter:
             _kill_group(proc)
             await _reap(proc)
             logger.warning("harness %s timed out", argv[0])
+            self.timeout_cause = timeout_cause(
+                argv[0], bytes(err_seen).decode("utf-8", errors="replace"))
             return "[reflexd] harness timed out"
         self._note_usage(argv[0], stdout)
         reported = _task_capture.tokens(stdout or b"", Path(argv[0]).name)
@@ -4363,7 +4401,8 @@ class Reflexd:
                 "release the task."
             )
         elif reply == "[reflexd] harness timed out":
-            reply = _timed_out_line(last_step=self._activity)
+            reply = _timed_out_line(last_step=self._activity,
+                                    cause=getattr(self.adapter, "timeout_cause", None))
 
         thread_root_id = envelope_thread_root(envelope)
         # SSE fan-out gives each recipient a per-envelope id while the
@@ -5228,7 +5267,8 @@ class Reflexd:
                 return (f"{reflexd_wake.STATUS_PREFIX} {wt.main} moved after @{who}'s GO "
                         f"on {tip[:12]}; rebased to {new['tip'][:12]}, which needs a fresh "
                         f"review (git range-diff {res.before[:12]}..{tip[:12]} "
-                        f"{wt.main}..{new['tip'][:12]}); not on main")
+                        f"{wt.main}..{new['tip'][:12]}); not on main. "
+                        f"{_review_gate.review_ask(who, new['tip'])}")
             return status
         if res.status in ("behind", "not_tip"):
             return None  # the turn's own end re-holds the new tip

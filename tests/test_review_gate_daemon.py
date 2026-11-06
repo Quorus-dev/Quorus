@@ -304,7 +304,11 @@ def test_main_moved_after_the_go_rebases_and_asks_again(env):
     [status] = [p["content"] for p in relay.posted]
     assert f"after @rev-codex's GO on {tip[:12]}" in status
     assert f"rebased to {new['tip'][:12]}, which needs a fresh review" in status
-    assert "range-diff" in status and status.endswith("not on main")
+    assert "range-diff" in status and "; not on main." in status
+    # The reviewer is asked outright: "needs a fresh review" alone read as status
+    # and Codex chose NO_REPLY (live run, 2026-11-06).
+    assert status.endswith(f"@rev-codex: reply `✅ GO on {new['tip'][:12]}` to publish it, "
+                           "or `/disagree blocking` with why.")
 
 
 def test_dirty_main_checkout_says_why_once(env):
