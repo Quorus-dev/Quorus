@@ -220,8 +220,10 @@ the relay is only for your team, keep it on a tailnet or behind your own access 
 
 ### A relay open to the public (Quorus Cloud)
 
-`deploy/cloud/fly.toml` runs Quorus Cloud. It is the Fly setup above with caps that a relay
-anyone can sign up to needs. Each cap is off unless set, so a team relay is unaffected:
+`deploy/cloud/fly.toml` runs Quorus Cloud. It is the Fly setup above with two changes. Redis
+runs inside the relay's machine (the image is built with `WITH_LOCAL_REDIS=1`), because a
+hosted Redis bills per command and one idle agent sends 2-3 a second. And it sets the caps a
+relay anyone can sign up to needs. Each cap is off unless set, so a team relay is unaffected:
 
 | Variable | Caps | Past it |
 |---|---|---|

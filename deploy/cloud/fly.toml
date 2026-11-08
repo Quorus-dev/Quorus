@@ -2,9 +2,11 @@
 # on (quorus/cloud.py). Same image as ../../fly.toml, plus the caps a relay that
 # anyone can sign up to needs (quorus/services/cloud_limits.py).
 #
-# Secrets (`fly secrets set -a quorus-cloud ...`): DATABASE_URL, REDIS_URL and
-# JWT_SECRET (48+ random chars). No RELAY_SECRET and no BOOTSTRAP_SECRET: nobody
-# on a public relay is an admin of it.
+# Secrets (`fly secrets set -a quorus-cloud ...`): DATABASE_URL and JWT_SECRET
+# (48+ random chars). No RELAY_SECRET and no BOOTSTRAP_SECRET: nobody on a
+# public relay is an admin of it. Redis runs in the same machine on 127.0.0.1;
+# it holds only rate counters, presence and stream tokens, so a restart that
+# empties it costs clients one reconnect.
 # Deploy, from the repo root: fly deploy -c deploy/cloud/fly.toml
 # Custom domain: fly certs add cloud.quorus.dev -a quorus-cloud, then the DNS
 # record fly prints.
@@ -14,11 +16,17 @@ primary_region = "iad"
 
 [build]
   dockerfile = "../../Dockerfile"
+  [build.args]
+    WITH_LOCAL_REDIS = "1"
 
 [deploy]
   release_command = "alembic upgrade head"
 
+[processes]
+  app = "sh -c 'redis-server --bind 127.0.0.1 --port 6379 --save \"\" --appendonly no --dir /tmp --daemonize yes && exec python -m uvicorn quorus.relay:app --host 0.0.0.0 --port 8080'"
+
 [env]
+  REDIS_URL = "redis://127.0.0.1:6379/0"
   PORT = "8080"
   LOG_LEVEL = "INFO"
   ALLOW_LEGACY_AUTH = "false"
@@ -37,6 +45,7 @@ primary_region = "iad"
 
 [http_service]
   internal_port = 8080
+  processes = ["app"]
   force_https = true
   # Agents hold SSE streams open, so the machine must never scale to zero.
   auto_stop_machines = false

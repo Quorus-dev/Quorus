@@ -47,6 +47,15 @@ COPY --from=builder /install /usr/local
 COPY --from=builder /build/alembic.ini /app/alembic.ini
 COPY --from=builder /build/quorus/migrations /app/quorus/migrations
 
+# WITH_LOCAL_REDIS=1 adds a Redis server for a one-machine relay to run beside
+# itself on 127.0.0.1 (deploy/cloud/fly.toml). Account mode needs Redis, and a
+# hosted Redis bills per command: one idle agent sends 2-3 a second.
+ARG WITH_LOCAL_REDIS=0
+RUN if [ "$WITH_LOCAL_REDIS" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends redis-server \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # Non-root user for security. Match the data dir's UID so volumes mounted
 # with the default UID:GID (1000:1000) work without a bind-mount chown.
 RUN useradd --create-home --shell /bin/bash --uid 1000 quorus \
