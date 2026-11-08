@@ -2683,13 +2683,14 @@ def test_join_accepts_bare_room_name_without_flags():
 
 
 def test_short_code_join_without_a_relay_says_so(monkeypatch, capsys):
-    """No public relay exists: a bare code fell back to the dead fly.dev relay
-    and failed "can't reach relay" (laptop-2 agent, 2026-10-17)."""
+    """With Quorus Cloud turned off and no relay set up, a bare code says it
+    needs an address. It used to fall back to the dead fly.dev relay and fail
+    "can't reach relay" (laptop-2 agent, 2026-10-17)."""
     import quorus_cli.cli as cli
 
     from quorus.cli import _cmd_join
 
-    monkeypatch.delenv("QUORUS_PUBLIC_RELAY", raising=False)
+    monkeypatch.setenv("QUORUS_PUBLIC_RELAY", "off")
     monkeypatch.setattr(cli, "load_config", lambda: {})
 
     def no_network(*_a, **_k):

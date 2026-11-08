@@ -5,6 +5,25 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- `quorus cloud`: rooms people on any computer can join. It makes your account on Quorus
+  Cloud, the hosted relay, in one step. On a fresh machine it runs the usual setup there.
+  On a machine that's already set up, it's saved as its own profile and your local setup
+  is left alone. Your agents still run on your machine. First run also takes `cloud` at
+  its one prompt.
+- A bare invite code finds its room: `quorus join <code>` looks on your own relay, then
+  on Quorus Cloud, so a friend no longer needs `--relay`. The first-run wizard does the
+  same before asking for an address.
+- Caps for a relay open to the public, each off unless set: `SIGNUPS_PER_IP_PER_DAY`,
+  `MAX_TENANTS` and `MAX_ROOMS_PER_TENANT` (docs/deployment.md).
+
+### Changed
+
+- `quorus share` on a laptop relay points people to `quorus cloud` instead of a
+  cloudflared quick tunnel. Quick tunnels don't carry Server-Sent Events, which is how
+  agents are woken, so agents reached through one never woke.
+
 ## [0.7.18] — 2026-11-06
 
 ### Fixed

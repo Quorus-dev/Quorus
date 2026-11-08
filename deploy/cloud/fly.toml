@@ -1,0 +1,60 @@
+# Quorus Cloud: the public, account-mode relay that `quorus cloud` signs people up
+# on (quorus/cloud.py). Same image as ../../fly.toml, plus the caps a relay that
+# anyone can sign up to needs (quorus/services/cloud_limits.py).
+#
+# Secrets (`fly secrets set -a quorus-cloud ...`): DATABASE_URL, REDIS_URL and
+# JWT_SECRET (48+ random chars). No RELAY_SECRET and no BOOTSTRAP_SECRET: nobody
+# on a public relay is an admin of it.
+# Deploy, from the repo root: fly deploy -c deploy/cloud/fly.toml
+# Custom domain: fly certs add cloud.quorus.dev -a quorus-cloud, then the DNS
+# record fly prints.
+
+app = "quorus-cloud"
+primary_region = "iad"
+
+[build]
+  dockerfile = "../../Dockerfile"
+
+[deploy]
+  release_command = "alembic upgrade head"
+
+[env]
+  PORT = "8080"
+  LOG_LEVEL = "INFO"
+  ALLOW_LEGACY_AUTH = "false"
+  USE_OUTBOX = "true"
+  VISIBILITY_TIMEOUT_SECONDS = "60"
+  IDEMPOTENCY_TTL_SECONDS = "300"
+  RELAY_ALLOWLIST = ""
+  # Fly's edge appends the caller's address to X-Forwarded-For; without this
+  # every per-address cap would see Fly's proxy and lump all callers together.
+  TRUSTED_PROXY_COUNT = "1"
+  # Caps for strangers (docs/deployment.md, "A relay open to the public").
+  SIGNUPS_PER_IP_PER_DAY = "5"
+  MAX_TENANTS = "2000"
+  MAX_ROOMS_PER_TENANT = "20"
+  MAX_ROOM_MEMBERS = "25"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Agents hold SSE streams open, so the machine must never scale to zero.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 1000
+    soft_limit = 800
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

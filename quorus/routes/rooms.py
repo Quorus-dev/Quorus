@@ -18,6 +18,7 @@ from quorus.routes.models import (
     RenameRoomRequest,
 )
 from quorus.routes.room_auth import drop_owned_agents, require_not_observer_only
+from quorus.services.cloud_limits import check_room_quota
 
 router = APIRouter()
 logger = logging.getLogger("quorus.routes.rooms")
@@ -50,6 +51,7 @@ async def create_room(
 
     await reserve_names(request, auth, tid, creator)
     svc = request.app.state.room_service
+    await check_room_quota(svc, tid)
     result = await svc.create(tid, req.name, creator, private=req.private)
     await request.app.state.backends.participants.add(tid, creator)
     return result

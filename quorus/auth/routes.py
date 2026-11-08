@@ -8,12 +8,13 @@ import re
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, field_validator
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from quorus.admin.models import ApiKey, Participant, Tenant
 from quorus.auth.tokens import create_jwt, extract_key_prefix, generate_api_key, verify_api_key
 from quorus.config import get_real_ip
 from quorus.routes.helpers import _coerce_bool
+from quorus.services.cloud_limits import check_new_workspace
 from quorus.storage.postgres import get_db_session
 
 logger = logging.getLogger("quorus.auth")
@@ -301,6 +302,14 @@ async def signup(
                     status_code=409,
                     detail=f"Workspace '{req.workspace}' is already taken",
                 )
+
+            # After the name check: a taken name, which clients retry with a
+            # suffix, mustn't use up the address's workspaces for the day.
+            async def _tenant_count() -> int:
+                return (await session.execute(select(func.count()).select_from(Tenant))
+                        ).scalar_one()
+
+            await check_new_workspace(rate_limit_svc, client_ip, _tenant_count)
 
             # Create tenant
             tenant = Tenant(slug=req.workspace, display_name=req.workspace)

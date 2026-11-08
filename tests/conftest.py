@@ -39,6 +39,9 @@ os.environ.setdefault("BOOTSTRAP_SECRET", "test-bootstrap-secret")
 # relays, daemons and pty sessions inherit it. Tests of the dispatch itself
 # set it back to 1 and mock subprocess.
 os.environ["QUORUS_NOTIFY"] = "0"
+# Never sign up on or resolve codes against the real Quorus Cloud. Tests of the
+# fallback set QUORUS_PUBLIC_RELAY to a stub relay.
+os.environ["QUORUS_PUBLIC_RELAY"] = "off"
 
 # An agent woken by reflexd runs the suite with its live identity in the
 # environment (QUORUS_RELAY_URL etc.), and config tests then resolve the real

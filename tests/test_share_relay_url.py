@@ -78,12 +78,14 @@ def test_plain_nonloopback_origins_are_accepted(url):
 
 
 @pytest.mark.parametrize("relay", [LOCAL, "http://[::1]:8787", "http://localhost:8787"])
-def test_local_default_prints_concrete_tunnel_fix(mint, monkeypatch, capsys, relay):
+def test_local_default_points_at_quorus_cloud(mint, monkeypatch, capsys, relay):
     monkeypatch.setattr(cli, "RELAY_URL", relay)
     cli._cmd_share(args())
     shown = capsys.readouterr().out
-    assert f"cloudflared tunnel --url {shlex.quote(relay)}" in shown
-    assert "quorus share applications --relay-url https://<the-tunnel-host>" in shown
+    assert "quorus cloud" in shown
+    assert "quorus share applications --relay-url https://<your-relay-host>" in shown
+    # Quick tunnels don't carry SSE, so agents behind one never wake.
+    assert "cloudflared" not in shown
     assert "quorus relay --host 0.0.0.0" not in shown
 
 
