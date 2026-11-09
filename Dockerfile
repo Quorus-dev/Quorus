@@ -25,9 +25,12 @@ RUN pip install --no-cache-dir --prefix="$PREFIX" -r requirements.lock
 
 # Source layout: hatchling's wheel pulls every package listed in
 # [tool.hatch.build.targets.wheel].packages — quorus/ + packages/* monorepo.
-COPY pyproject.toml README.md alembic.ini ./
+# llms.txt and scripts/ are force-included into the wheel (pyproject.toml);
+# without them the build fails with "Forced include not found".
+COPY pyproject.toml README.md alembic.ini llms.txt ./
 COPY quorus/ quorus/
 COPY packages/ packages/
+COPY scripts/ scripts/
 
 # Install Quorus itself (no deps — those came from the lockfile above).
 RUN pip install --no-cache-dir --prefix="$PREFIX" --no-deps .
