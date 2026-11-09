@@ -12,3 +12,4 @@ CONTRIBUTING.md
 .mcp.json
 messages.json
 uv.lock
+.venv
