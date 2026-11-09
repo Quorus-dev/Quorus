@@ -30,3 +30,19 @@ def test_image_copies_every_file_the_wheel_force_includes():
     missing = [src for src in forced
                if not any(src == c or src.startswith(c.rstrip("/") + "/") for c in copied)]
     assert not missing, f"Dockerfile never copies: {missing}"
+
+
+def test_cloud_relay_keeps_rooms_and_sees_real_callers():
+    """Both found on the live relay (2026-11-09): rooms live in Redis, so an
+    in-memory Redis lost every room on restart; and Fly's X-Forwarded-For ends
+    with Fly's own address, so a proxy count of 1 put every caller in one bucket."""
+    import tomllib
+
+    cloud = tomllib.loads((ROOT / "deploy/cloud/fly.toml").read_text())
+    assert cloud["env"]["TRUSTED_PROXY_COUNT"] == "2"
+    assert cloud["mounts"]["destination"] == "/app/data"
+    start = (ROOT / "deploy/cloud/start.sh").read_text()
+    assert "--appendonly yes" in start and "--dir \"$DATA\"" in start
+    assert "DATA=/app/data/redis" in start
+    assert start.count("setpriv --reuid=1000") == 2  # redis and the relay, not root
+    assert tomllib.loads((ROOT / "fly.toml").read_text())["env"]["TRUSTED_PROXY_COUNT"] == "2"

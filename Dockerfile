@@ -58,6 +58,7 @@ RUN if [ "$WITH_LOCAL_REDIS" = "1" ]; then \
       apt-get update && apt-get install -y --no-install-recommends redis-server \
       && rm -rf /var/lib/apt/lists/*; \
     fi
+COPY deploy/cloud/start.sh /app/start-cloud.sh
 
 # Non-root user for security. Match the data dir's UID so volumes mounted
 # with the default UID:GID (1000:1000) work without a bind-mount chown.
@@ -65,7 +66,10 @@ RUN useradd --create-home --shell /bin/bash --uid 1000 quorus \
     && mkdir -p /app/data \
     && chown -R quorus:quorus /app/data
 
-USER quorus
+# RUN_AS=root is only for deploy/cloud/start.sh, which hands the mounted volume
+# to quorus and then drops to it. Everything else runs as quorus from the start.
+ARG RUN_AS=quorus
+USER ${RUN_AS}
 
 # Persist messages across restarts (fallback when Postgres unavailable).
 VOLUME ["/app/data"]

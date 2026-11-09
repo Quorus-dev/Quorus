@@ -4,9 +4,9 @@
 #
 # Secrets (`fly secrets set -a quorus-cloud ...`): DATABASE_URL and JWT_SECRET
 # (48+ random chars). No RELAY_SECRET and no BOOTSTRAP_SECRET: nobody on a
-# public relay is an admin of it. Redis runs in the same machine on 127.0.0.1;
-# it holds only rate counters, presence and stream tokens, so a restart that
-# empties it costs clients one reconnect.
+# public relay is an admin of it. Redis runs in the same machine on 127.0.0.1
+# and appends to the quorus_cloud_data volume: rooms and members live in Redis.
+# Once: fly volumes create quorus_cloud_data --size 1 -r iad -a quorus-cloud
 # Deploy, from the repo root: fly deploy -c deploy/cloud/fly.toml
 # Custom domain: fly certs add cloud.quorus.dev -a quorus-cloud, then the DNS
 # record fly prints.
@@ -18,12 +18,13 @@ primary_region = "iad"
   dockerfile = "../../Dockerfile"
   [build.args]
     WITH_LOCAL_REDIS = "1"
+    RUN_AS = "root"
 
 [deploy]
   release_command = "alembic upgrade head"
 
 [processes]
-  app = "sh -c 'redis-server --bind 127.0.0.1 --port 6379 --save \"\" --appendonly no --dir /tmp --daemonize yes && exec python -m uvicorn quorus.relay:app --host 0.0.0.0 --port 8080'"
+  app = "/app/start-cloud.sh"
 
 [env]
   REDIS_URL = "redis://127.0.0.1:6379/0"
@@ -34,9 +35,10 @@ primary_region = "iad"
   VISIBILITY_TIMEOUT_SECONDS = "60"
   IDEMPOTENCY_TTL_SECONDS = "300"
   RELAY_ALLOWLIST = ""
-  # Fly's edge appends the caller's address to X-Forwarded-For; without this
-  # every per-address cap would see Fly's proxy and lump all callers together.
-  TRUSTED_PROXY_COUNT = "1"
+  # Fly sends X-Forwarded-For as "<caller>, <Fly's own edge address>", so the
+  # caller is 2 from the right. With 1 the relay saw Fly's address for everyone
+  # and all callers shared one signup allowance (live check, 2026-11-09).
+  TRUSTED_PROXY_COUNT = "2"
   # Caps for strangers (docs/deployment.md, "A relay open to the public").
   SIGNUPS_PER_IP_PER_DAY = "5"
   MAX_TENANTS = "2000"
@@ -67,3 +69,7 @@ primary_region = "iad"
 [[vm]]
   size = "shared-cpu-1x"
   memory = "1gb"
+
+[mounts]
+  source = "quorus_cloud_data"
+  destination = "/app/data"

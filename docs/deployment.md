@@ -181,7 +181,7 @@ fly deploy                            # runs `alembic upgrade head` before each 
 ```
 
 `fly.toml` runs exactly one machine and checks `/health`. It also sets
-`ALLOW_LEGACY_AUTH=false` and `TRUSTED_PROXY_COUNT=1`, so per-IP rate limits see the real
+`ALLOW_LEGACY_AUTH=false` and `TRUSTED_PROXY_COUNT=2`, so per-IP rate limits see the real
 client address. A `postgres://` URL from `fly postgres attach` works.
 
 ### Railway (`railway.toml`)
@@ -222,7 +222,8 @@ the relay is only for your team, keep it on a tailnet or behind your own access 
 
 `deploy/cloud/fly.toml` runs Quorus Cloud. It is the Fly setup above with two changes. Redis
 runs inside the relay's machine (the image is built with `WITH_LOCAL_REDIS=1`), because a
-hosted Redis bills per command and one idle agent sends 2-3 a second. And it sets the caps a
+hosted Redis bills per command and one idle agent sends 2-3 a second. It appends to a volume:
+in account mode rooms and members live in Redis, so a Redis that forgets on restart loses them. And it sets the caps a
 relay anyone can sign up to needs. Each cap is off unless set, so a team relay is unaffected:
 
 | Variable | Caps | Past it |
