@@ -636,9 +636,39 @@ def render_share_card(
     install_url: str | None = None,
     console_width: int = 80,
     ttl_label: str = "7 days",
+    page_url: str | None = None,
+    local_only: bool = False,
+    join_relay: str | None = None,
 ) -> list[Text]:
-    """A polished share card for the room. Returns Text lines, no panel."""
-    width = max(SHARE_CARD_MIN_W, min(console_width - 4, 64))
+    """A polished share card for the room. Returns Text lines, no panel.
+
+    ``join_relay`` is the ``--relay`` a teammate must pass: a bare code is only
+    looked up on their own relay and on Quorus Cloud.
+
+    ``page_url`` (the relay's invite page) leads when there is one; the page
+    carries the one-line install, so the card doesn't repeat it. ``local_only``
+    says the relay is on this computer: the card then says nobody elsewhere can
+    reach it and how to get a room they can."""
+    # (text, style) rows; None is a blank row. The card is as wide as its
+    # longest row, up to the terminal, so a link or command never breaks the border.
+    rows: list[tuple[str, str] | None] = [None]
+    if page_url:
+        rows += [(f"Link:   {page_url}", "bold accent"),
+                 ("        a page with the steps, for anyone", "muted"), None]
+    rows += [(f"Code:   {_short_code(code)}", "bright" if page_url else "bold accent"), None]
+    if local_only:
+        rows += [("This relay's address is this computer's own,", "muted"),
+                 ("so people elsewhere can't reach it.", "muted"),
+                 ("For people anywhere:  quorus cloud", "bright"), None]
+    if install_url and not page_url:
+        rows += [("One-line install:", "muted"), (install_url, "bright"), None]
+    join = f"quorus join {_short_code(code)}" + (f" --relay {join_relay}" if join_relay else "")
+    rows += [(f"Or:  {join}", "muted"), None,
+             (f"Expires: {ttl_label}  ·  press c to copy"
+              f"{' the link' if page_url else ''}, any key to close", "dim")]
+
+    longest = max(len(row[0]) for row in rows if row)
+    width = max(SHARE_CARD_MIN_W, min(console_width - 4, max(64, longest + 6)))
     title = f" Share #{room_name} "
     side = max(2, (width - len(title) - 2) // 2)
     # Hue on the border spans only: a Text's base style colours every span
@@ -647,40 +677,16 @@ def render_share_card(
     top.append("┌" + "─" * side, style="brand")
     top.append(title, style="bold")
     top.append("─" * (width - 2 - side - len(title)) + "┐", style="brand")
-
-    def _row(left: str, *, style: str = "bright") -> Text:
-        body = "  " + left
-        pad = max(0, width - 2 - len(body))
+    lines: list[Text] = [top]
+    for row in rows:
+        body, style = ("  " + row[0], row[1]) if row else ("", "")
         line = Text("  ")
         line.append("│", style="brand")
         line.append(body, style=style)
-        line.append(" " * pad, style="")
+        line.append(" " * max(0, width - 2 - len(body)), style="")
         line.append("│", style="brand")
-        return line
-
-    def _blank() -> Text:
-        line = Text("  ")
-        line.append("│", style="brand")
-        line.append(" " * (width - 2), style="")
-        line.append("│", style="brand")
-        return line
-
-    bottom = Text("  └" + "─" * (width - 2) + "┘", style="brand")
-
-    lines: list[Text] = [top, _blank()]
-    lines.append(_row(f"Code:   {_short_code(code)}", style="bold accent"))
-    lines.append(_blank())
-    if install_url:
-        lines.append(_row("One-line install:", style="muted"))
-        lines.append(_row(install_url, style="bright"))
-        lines.append(_blank())
-    lines.append(_row(f"Or:  quorus join {_short_code(code)}", style="muted"))
-    lines.append(_blank())
-    lines.append(_row(
-        f"Expires: {ttl_label}  ·  press c to copy, any key to close",
-        style="dim",
-    ))
-    lines.append(bottom)
+        lines.append(line)
+    lines.append(Text("  └" + "─" * (width - 2) + "┘", style="brand"))
     return lines
 
 
