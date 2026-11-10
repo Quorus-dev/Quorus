@@ -104,3 +104,35 @@ def test_a_forged_link_from_a_relay_is_not_shown(monkeypatch, console):
         monkeypatch, console, CLOUD,
         {"code": CODE, "page_url": f"https://evil.test/j/{CODE}?x=$(id)"}, key="c")
     assert "evil.test" not in out and copied == [CODE]
+
+
+# ---- quorus doctor on an account relay ---------------------------------------
+
+
+@pytest.mark.parametrize("secret,key,ok", [("", "mct_synthetic", True), ("s3cret", "", True),
+                                           ("", "", False)])
+def test_doctor_counts_an_account_key_as_a_credential(monkeypatch, capsys, secret, key, ok):
+    """A `quorus cloud` account has a key and no shared secret; doctor called that broken."""
+    from unittest.mock import MagicMock
+
+    from quorus_cli import cli
+
+    def get(url, **kw):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = [{"id": "r1", "name": "launch"}]
+        return resp
+
+    present = MagicMock()
+    present.exists.return_value = True
+    monkeypatch.setattr(cli.httpx, "get", get)
+    monkeypatch.setattr(cli, "RELAY_SECRET", secret)
+    monkeypatch.setattr(cli, "API_KEY", key)
+    monkeypatch.setattr(cli, "INSTANCE_NAME", "linkhost")
+    monkeypatch.setattr("quorus.config.resolve_config_file", lambda: present)
+    try:
+        cli._cmd_doctor(MagicMock(verbose=False))
+    except SystemExit:
+        pass
+    line = next(row for row in capsys.readouterr().out.splitlines()
+                if "Relay credentials configured" in row)
+    assert ("✓" in line) is ok and "mct_synthetic" not in line

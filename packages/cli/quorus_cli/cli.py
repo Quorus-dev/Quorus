@@ -7026,11 +7026,14 @@ def _cmd_doctor(args):
         fix="Run: quorus init <name> --secret -",
     )
 
-    # 3. Secret configured
+    # 3. A credential configured. An account relay (Quorus Cloud) gives each
+    # person a key and has no shared secret, so a key alone is a full setup: this
+    # check used to fail every healthy `quorus cloud` account.
     check(
-        "Relay secret configured",
-        bool(RELAY_SECRET),
-        fix="Set RELAY_SECRET env var or add relay_secret to config",
+        "Relay credentials configured",
+        bool(RELAY_SECRET or API_KEY),
+        detail="your own account key" if API_KEY else "",
+        fix="Run: quorus cloud (hosted), or quorus init <name> --secret - (your own relay)",
     )
 
     # 4. Instance name configured
