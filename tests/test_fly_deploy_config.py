@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -20,7 +22,7 @@ def test_runtime_image_includes_alembic_config_for_release_command():
 def test_image_copies_every_file_the_wheel_force_includes():
     """The image didn't build: llms.txt and scripts/ are force-included into the
     wheel but were never copied in (found deploying Quorus Cloud, 2026-11-09)."""
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")  # stdlib from Python 3.11
 
     dockerfile = (ROOT / "Dockerfile").read_text()
     copied = [word for line in dockerfile.splitlines() if line.startswith("COPY ")
@@ -36,7 +38,7 @@ def test_cloud_relay_keeps_rooms_and_sees_real_callers():
     """Both found on the live relay (2026-11-09): rooms live in Redis, so an
     in-memory Redis lost every room on restart; and Fly's X-Forwarded-For ends
     with Fly's own address, so a proxy count of 1 put every caller in one bucket."""
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")  # stdlib from Python 3.11
 
     cloud = tomllib.loads((ROOT / "deploy/cloud/fly.toml").read_text())
     assert cloud["env"]["TRUSTED_PROXY_COUNT"] == "2"
