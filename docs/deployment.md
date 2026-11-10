@@ -181,7 +181,7 @@ fly deploy                            # runs `alembic upgrade head` before each 
 ```
 
 `fly.toml` runs exactly one machine and checks `/health`. It also sets
-`ALLOW_LEGACY_AUTH=false` and `TRUSTED_PROXY_COUNT=1`, so per-IP rate limits see the real
+`ALLOW_LEGACY_AUTH=false` and `TRUSTED_PROXY_COUNT=2`, so per-IP rate limits see the real
 client address. A `postgres://` URL from `fly postgres attach` works.
 
 ### Railway (`railway.toml`)
@@ -201,8 +201,9 @@ disk it declares needs a paid plan. Use a paid instance for a team.
 
 ## Joining an account-mode relay
 
-**Not re-verified for 0.5.2.** Create your workspace and first API key with the relay's signup
-endpoint. The key is shown once:
+`quorus cloud --relay https://<relay> --name <your-name>` signs you up and sets you up in one
+step (verified on a local Postgres relay on 0.7.18). Without `--relay` it uses Quorus Cloud, or
+`$QUORUS_PUBLIC_RELAY`. By hand, the signup endpoint returns the key once:
 
 ```bash
 curl -s https://<relay>/v1/auth/signup -H 'Content-Type: application/json' \
@@ -216,6 +217,24 @@ of their own.
 Self-service signup is open on any account-mode relay that people can reach. Anyone can create
 their own workspace, which is isolated from yours and rate-limited to 5 per minute per IP. If
 the relay is only for your team, keep it on a tailnet or behind your own access control.
+
+### A relay open to the public (Quorus Cloud)
+
+`deploy/cloud/fly.toml` runs Quorus Cloud. It is the Fly setup above with two changes. Redis
+runs inside the relay's machine (the image is built with `WITH_LOCAL_REDIS=1`), because a
+hosted Redis bills per command and one idle agent sends 2-3 a second. It appends to a volume:
+in account mode rooms and members live in Redis, so a Redis that forgets on restart loses them. And it sets the caps a
+relay anyone can sign up to needs. Each cap is off unless set, so a team relay is unaffected:
+
+| Variable | Caps | Past it |
+|---|---|---|
+| `SIGNUPS_PER_IP_PER_DAY` | new workspaces one address makes a day | 429, try tomorrow |
+| `MAX_TENANTS` | workspaces on the relay in total | 503, "this relay is full" |
+| `MAX_ROOMS_PER_TENANT` | rooms in one workspace | 403, destroy one first |
+| `MAX_ROOM_MEMBERS` | people and agents in one room (default 50) | 400, room is full |
+
+Joining someone's workspace with an invite never counts against the first two. The per-minute
+limits (5 signups per address, 10 rooms and 60 messages per sender) apply as always.
 
 ## Checking a relay
 

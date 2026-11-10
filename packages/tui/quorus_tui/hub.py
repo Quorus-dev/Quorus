@@ -417,19 +417,35 @@ def _first_launch_setup(console: Console) -> dict:
     # flow defaulted to a dead public relay and, on the local path, saved
     # NO secret — every request after setup was unauthorized (review
     # 2026-10-09).
+    from quorus.cloud import SignupError, join_workspace, public_relay, signup
     from quorus.runtime.local_relay import ensure_local_relay, new_secret
 
+    cloud = public_relay()
     console.print()
     console.print(
         "  [muted]Press Enter to run Quorus on this computer, or paste a "
         "teammate's invite code ([/][accent]ABCD-EFGH[/][muted]) to join their relay.[/]"
     )
+    if cloud:
+        console.print("  [muted]Type [/][accent]cloud[/][muted] for rooms people on other "
+                      "computers can join (Quorus Cloud).[/]")
     raw = Prompt.ask(
         "\n  Invite, or Enter to run it here", default="", show_default=False
     ).strip()
 
-    decoded = _decode_invite_token(raw) if raw else None
-    if raw and decoded:
+    is_cloud = bool(cloud) and raw.lower() == "cloud"
+    decoded = _decode_invite_token(raw) if raw and not is_cloud else None
+    if is_cloud:
+        console.print(f"\n  [dim]Creating your account on {cloud}...[/] ", end="")
+        try:
+            account = signup(cloud, name)
+        except SignupError as exc:
+            console.print("[error]✗[/]")
+            console.print(f"  [dim]{exc}[/]")
+        else:
+            console.print("[success]✓[/]")
+            relay_url, api_key, relay_ok = cloud, account.api_key, True
+    elif raw and decoded:
         relay_url = decoded["relay_url"]
         secret = decoded["secret"]
         api_key = decoded["api_key"]
@@ -459,13 +475,27 @@ def _first_launch_setup(console: Console) -> dict:
                 "[dim]Expected an invite code like ABCD-EFGH.[/]"
             )
         else:
-            # A short code lives on the teammate's relay: we need its address.
-            # Anything that isn't one (a stray message, a bare word) is asked
-            # again instead of being "resolved" against it (stranger test F2).
-            address = _ask_relay_address(console)
-            relay_url = address or relay_url
+            # A short code lives on the relay that made it. Quorus Cloud is
+            # tried first; for any other relay we need its address. Anything that
+            # isn't one (a stray message, a bare word) is asked again instead of
+            # being "resolved" against it (stranger test F2).
             resp = None
-            if address:
+            address = ""
+            if cloud:
+                try:
+                    resp = httpx.get(f"{cloud}/v1/join/resolve/{canonical}",
+                                     timeout=10, follow_redirects=True)
+                except Exception:
+                    resp = None
+                if resp is not None and resp.status_code == 200:
+                    address = cloud
+                    console.print(f"\n  [dim]Found [accent]{raw}[/] on {cloud}[/] ", end="")
+                else:
+                    resp = None
+            if not address:
+                address = _ask_relay_address(console)
+            relay_url = address or relay_url
+            if address and resp is None:
                 console.print(f"  [dim]Resolving [accent]{raw}[/] on {relay_url}...[/] ",
                               end="")
                 try:
@@ -488,6 +518,15 @@ def _first_launch_setup(console: Console) -> dict:
                     # A secret-free invite: spend it for this name's own key.
                     api_key, secret = _redeem_in_wizard(relay_url, payload["c"], name), ""
                     relay_ok = bool(api_key)
+                elif payload.get("t") and payload.get("i"):
+                    # An account-mode invite (Quorus Cloud): join the inviter's
+                    # workspace under this name's own key.
+                    try:
+                        api_key = join_workspace(relay_url, name, payload["t"], payload["i"])
+                    except SignupError as exc:
+                        console.print(f"  [error]✗[/] [dim]{exc}[/]")
+                        api_key, relay_ok = "", False
+                    secret = ""
                 if payload.get("n"):
                     console.print(
                         f"  [muted]You'll land in [room]#{payload['n']}[/] "
@@ -511,7 +550,12 @@ def _first_launch_setup(console: Console) -> dict:
             api_key = _claim_human_key(relay_url, secret, name, console)
 
     if not relay_ok:
-        if raw:
+        if is_cloud:
+            console.print(
+                "\n  [dim]Not connected yet. Rerun [bold]quorus[/] to try Quorus Cloud "
+                "again, or press Enter there to run Quorus on this computer.[/]"
+            )
+        elif raw:
             # An invitee has no secret: `quorus init --secret` was the wrong advice.
             console.print(
                 "\n  [dim]Not connected yet. Check the code and your teammate's relay "

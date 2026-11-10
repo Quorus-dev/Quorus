@@ -3267,6 +3267,12 @@ def _cmd_profile(args):
     profile_cmd.run(args)
 
 
+def _cmd_cloud(args):
+    from quorus_cli import cloud_cmd
+    cloud_cmd.run(args, console=console, ui=_ui, current_name=INSTANCE_NAME or "",
+                  init=_cmd_init)
+
+
 def _cmd_destroy(args):
     asyncio.run(_destroy(args.room))
 
@@ -5172,30 +5178,39 @@ def _cmd_join(args):
 
         canonical = normalize_code(token_raw)
         if canonical is not None:
-            # No public relay exists: the old fly.dev default is dead, so a
-            # code with no relay "couldn't reach relay" every time (laptop-2
-            # agent, 2026-10-17). Codes only resolve on the relay that made them.
-            relay_for_lookup = (
-                getattr(args, "relay_url", None)
-                or os.environ.get("QUORUS_PUBLIC_RELAY")
-                or (load_config().get("relay_url") or "")
-            ).rstrip("/")
-            if not relay_for_lookup:
+            # Codes only resolve on the relay that made them: --relay, else this
+            # machine's relay, then Quorus Cloud (quorus/cloud.py). A dead
+            # default used to fail every bare code (laptop-2 agent, 2026-10-17),
+            # so one unreachable relay moves on to the next.
+            from quorus.cloud import code_relays
+
+            candidates = code_relays(getattr(args, "relay_url", None),
+                                     load_config().get("relay_url"))
+            if not candidates:
                 _ui.error(
                     "This code needs its relay's address",
                     hint="quorus join <code> --relay <url>  (the invite shows the "
                          "URL, or paste the full install line your teammate sent)",
                 )
                 sys.exit(5)
-            try:
-                resp = httpx.get(
-                    f"{relay_for_lookup}/v1/join/resolve/{canonical}",
-                    timeout=10,
-                    follow_redirects=True,
-                )
-            except httpx.ConnectError:
+            resp = None
+            unreachable: list[str] = []
+            for relay_for_lookup in candidates:
+                try:
+                    resp = httpx.get(
+                        f"{relay_for_lookup}/v1/join/resolve/{canonical}",
+                        timeout=10,
+                        follow_redirects=True,
+                    )
+                except httpx.HTTPError:
+                    unreachable.append(relay_for_lookup)
+                    resp = None
+                    continue
+                if resp.status_code != 404:
+                    break
+            if resp is None:
                 _ui.error_with_retry(
-                    "Can't reach relay", relay_url=relay_for_lookup,
+                    "Can't reach relay", relay_url=unreachable[-1],
                 )
                 sys.exit(2)
             if resp.status_code == 404:
@@ -5614,14 +5629,20 @@ def _cmd_share(args):
     from rich.markup import escape as _escape
 
     if not advertised_relay and is_loopback_url(RELAY_URL):
+        # The old hint was a cloudflared quick tunnel, but quick tunnels don't
+        # carry Server-Sent Events, and agents are woken over SSE (Cloudflare's
+        # Quick Tunnels docs, checked 2026-11-08).
         ui.console.print(
             "  [warning]![/] [muted]your relay runs on this machine only — a teammate "
-            "on another computer needs an address they can reach. Run:[/]"
+            "on another computer can't reach it. For a room people anywhere can "
+            "join, make it on Quorus Cloud:[/]"
         )
-        tunnel_cmd = "cloudflared tunnel --url " + shlex.quote(RELAY_URL)
-        ui.console.print(f"    [accent]{_escape(tunnel_cmd)}[/]")
+        ui.console.print("    [accent]quorus cloud[/]")
+        ui.console.print(
+            "  [muted]or serve this relay at a public https address "
+            "(docs/deployment.md) and run:[/]")
         ui.console.print(f"    [accent]{_escape('quorus share ' + shlex.quote(room))} "
-                         "--relay-url https://<the-tunnel-host>[/]\n")
+                         "--relay-url https://<your-relay-host>[/]\n")
 
     if advertised_relay:
         install_url = f"{advertised_relay}/v1/join/install/{code}.sh"
@@ -8340,6 +8361,7 @@ def _print_grouped_help():
     groups = [
         ("GET STARTED", [
             ("init <name>",        "One-command setup (name + relay + secret)"),
+            ("cloud",              "Rooms people on any computer can join (hosted)"),
             ("begin",              "Open the interactive hub (default if no command)"),
             ("doctor",             "Diagnose setup issues"),
             ("version",            "Show version, relay, and config"),
@@ -9523,6 +9545,8 @@ def main():
 
     from quorus_cli import profile_cmd as _profile_cmd
     _profile_cmd.add_parser(sub)
+    from quorus_cli import cloud_cmd as _cloud_cmd
+    _cloud_cmd.add_parser(sub)
 
     p_destroy = sub.add_parser("destroy", help="Delete a room and its history (admin)")
     p_destroy.add_argument("room", help="Room name")
@@ -10147,6 +10171,7 @@ def main():
         "kick": _cmd_kick,
         "destroy": _cmd_destroy,
         "profile": _cmd_profile,
+        "cloud": _cmd_cloud,
         "rename": _cmd_rename,
         "add-agent": _cmd_add_agent,
         "connect": _cmd_connect,

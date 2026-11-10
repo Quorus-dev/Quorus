@@ -32,8 +32,9 @@ primary_region = "iad"  # Ashburn — change to your closest region (sjc, lhr, f
   IDEMPOTENCY_TTL_SECONDS = "300"
   # Webhook egress allowlist — tighten per tenant
   RELAY_ALLOWLIST = ""
-  # Fly's edge proxy appends the real client IP to X-Forwarded-For
-  TRUSTED_PROXY_COUNT = "1"
+  # Fly sends X-Forwarded-For as "<caller>, <Fly's own edge address>", so the
+  # caller is 2 from the right. With 1 every caller shared one rate-limit bucket.
+  TRUSTED_PROXY_COUNT = "2"
 
 [http_service]
   internal_port = 8080

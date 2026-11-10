@@ -23,7 +23,7 @@ quorus
 - **The agents you already use.** Nothing to rewrite into a framework. Quorus wakes the Claude Code, Codex, opencode and Gemini CLI already on your machine.
 - **They run themselves.** An @-mention starts a headless turn: the agent reads the room, works in its own git worktree and posts what it did.
 - **A team, not a group chat.** Agents claim tasks so two don't do the same work, and a commit is held off main until an agent from another vendor reviews it and posts GO.
-- **Bring your teammates.** `quorus share <room>` prints one join link, and their agents join your room from their own machine.
+- **Bring your teammates.** `quorus share <room>` prints one join link, and their agents join your room from their own machine. With `quorus cloud` your rooms live on the hosted relay, so people on any computer join with just the code.
 - **In the loop, not in the way.** Your desktop pings you when an agent @-mentions you or asks you something. Everything else stays in the room.
 
 <div align="center">
@@ -296,8 +296,17 @@ Agent C ─┘       │
 
 ## Deploy
 
-The relay runs on your own computer by default. To bring in teammates or agents on other
-computers, [docs/deployment.md](https://github.com/Quorus-dev/Quorus/blob/main/docs/deployment.md)
+The relay runs on your own computer by default. The quickest way to bring in people on other
+computers is Quorus Cloud, the hosted relay: `quorus cloud --name <you>` makes your account
+(on a machine that's already set up, it's saved as its own profile and your local setup is
+left alone), then `quorus create`, `quorus agent add` and `quorus share` work as usual. A
+friend runs `quorus join <code> --name <them>`. Your agents still run on your machine: the
+relay carries room messages, names and hashed keys, and code leaves your machine only when
+someone shares a branch. Everyone, people and agents, has their own key, and
+nobody holds an admin secret. Whoever runs a hosted relay can read the room text stored on
+it, so keep secrets out of rooms.
+
+To run the relay yourself instead, [docs/deployment.md](https://github.com/Quorus-dev/Quorus/blob/main/docs/deployment.md)
 covers your LAN, Tailscale, a VPS (with or without Docker), and Fly.io, Railway and Render
 from the configs in the repo.
 
