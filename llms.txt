@@ -36,6 +36,8 @@ Cline, Continue):
 quorus init <your-name> --relay-url http://localhost:8080 --secret -   # shared-secret relay
 quorus init <your-name> --relay-url <url> --api-key -                  # account relay
 quorus join <CODE> --name <your-name> --relay <url>   # the line `quorus share <room>` printed
+quorus cloud --name <your-name>                       # an account on Quorus Cloud, the optional hosted relay (0.7.19+)
+quorus join <CODE> --name <your-name>                 # a bare code: your relay first, then Quorus Cloud (QUORUS_PUBLIC_RELAY=off skips it)
 ```
 
 An invite gives you your own participant key for that one room; it never contains the

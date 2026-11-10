@@ -55,6 +55,20 @@ def install_command(url: str) -> str | None:
     return f"curl -sSL {shlex.quote(url)} | bash"
 
 
+def invite_page_url(url: str) -> str | None:
+    """A relay's invite-page link (``/j/<code>``) for a share card, or None unless
+    it is a plain http(s) URL ending in a well-formed code. Like the install
+    command, it comes from a relay's answer and is pasted to other people."""
+    parsed = urlparse(url or "")
+    head, sep, code = parsed.path.rpartition("/j/")
+    if (parsed.scheme not in ("http", "https") or not parsed.netloc or not sep or head
+            or parsed.query or parsed.fragment or normalize_code(code) is None):
+        return None
+    if any(ch.isspace() or ch in "\"'<>`$\\" for ch in url):
+        return None
+    return url
+
+
 def normalize_code(raw: str) -> str | None:
     """Sanitize user input into a canonical code.
 
@@ -148,6 +162,35 @@ class JoinCodeService:
         if self._use_postgres:
             return await self._resolve_postgres(canonical)
         return await self._resolve_memory(canonical)
+
+    async def describe(self, raw: str) -> dict[str, Any] | None:
+        """What an invite page may show for a live code: ``room_name``,
+        ``created_by`` and ``expires_at``. Never the payload, which holds the
+        invite token. None when the code is missing or expired."""
+        canonical = normalize_code(raw)
+        if canonical is None:
+            return None
+        now = datetime.now(timezone.utc)
+        if self._use_postgres:
+            from sqlalchemy import select
+
+            from quorus.models.join_code import JoinCode
+            from quorus.storage.postgres import get_db_session
+
+            async with get_db_session() as session:
+                row = await session.execute(
+                    select(JoinCode.room_name, JoinCode.created_by, JoinCode.expires_at)
+                    .where(JoinCode.code == canonical))
+                found = row.first()
+            if found is None or found.expires_at < now:
+                return None
+            return {"room_name": found.room_name, "created_by": found.created_by,
+                    "expires_at": found.expires_at}
+        async with self._lock:
+            entry = self._mem.get(canonical)
+            if entry is None or entry["expires_at"] < now:
+                return None
+            return {k: entry[k] for k in ("room_name", "created_by", "expires_at")}
 
     # ------------------------------------------------------------------
     # Postgres path

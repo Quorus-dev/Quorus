@@ -5619,7 +5619,11 @@ def _cmd_share(args):
     # The code is looked up on THIS relay: say which one, or a teammate's
     # `quorus join` tried the (dead) default public relay instead.
     # Both come from the relay: quote them, since teammates paste these into a shell.
-    from quorus.services.join_code_svc import install_command, normalize_code
+    from quorus.services.join_code_svc import (
+        install_command,
+        invite_page_url,
+        normalize_code,
+    )
 
     if normalize_code(str(code)) is None:
         _ui.error("The relay returned an invalid invite code", hint="try again")
@@ -5647,6 +5651,14 @@ def _cmd_share(args):
     if advertised_relay:
         install_url = f"{advertised_relay}/v1/join/install/{code}.sh"
     install_cmd = install_command(str(install_url or ""))
+    # A relay that serves the invite page says so (page_url, 0.7.20+). A link
+    # to this machine's own loopback relay would open nothing for anyone else.
+    page_url = invite_page_url(
+        f"{advertised_relay}/j/{code}" if advertised_relay and body.get("page_url")
+        else str(body.get("page_url") or ""))
+    if page_url and not is_loopback_url(page_url):
+        ui.console.print(f"    [accent]{_escape(page_url)}[/]")
+        ui.console.print("    [dim]#  — a link with the steps; or, in a terminal: —[/]")
     ui.console.print(f"    [accent]{_escape(join_cmd)}[/]")
     if install_cmd:
         ui.console.print("    [dim]#  — or, for a fresh install: —[/]")
@@ -5843,6 +5855,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
             workspace = f"ws-{_secrets.token_hex(2)}"
         elif len(workspace) < 2:
             workspace = f"{workspace}{_secrets.token_hex(2)}"
+        signup_status = 0
         try:
             # Build signup payload — include tenant_id if joining existing workspace
             signup_payload = {"name": name, "workspace": workspace}
@@ -5882,6 +5895,7 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                         "[yellow]Warning: signup succeeded but no API key returned[/yellow]"
                     )
             else:
+                signup_status = signup_resp.status_code
                 console.print(
                     f"[yellow]Warning: signup failed (HTTP {signup_resp.status_code})[/yellow]"
                 )
@@ -5893,6 +5907,15 @@ def _apply_join_payload(payload: dict, name: str) -> None:
                     pass
         except Exception as exc:
             console.print(f"[yellow]Warning: signup failed: {exc}[/yellow]")
+        if not api_key and signup_status == 429:
+            # The relay's signup limit (a few a minute per network address), hit
+            # before the invite was looked at: the code is unspent, and asking the
+            # inviter for a fresh one, as the message below does, wouldn't help.
+            from quorus.cloud import signup_limit_message
+
+            _ui.error("Nothing was saved: " + signup_limit_message(signup_resp),
+                      hint="your invite is still good")
+            sys.exit(4)
         if not api_key:
             # Saving a setup with no key left the user unable to post, and
             # every later command failed somewhere less clear than here.

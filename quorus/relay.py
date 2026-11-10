@@ -608,7 +608,7 @@ app = FastAPI(
         "Any agent that speaks HTTP can join rooms, send messages, "
         "and coordinate work through this API."
     ),
-    version="0.7.19",
+    version="0.7.20",
     lifespan=lifespan,
 )
 
@@ -641,10 +641,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         # Referrer-Policy: never leak the relay URL (which may contain
         # tenant/room identifiers in the path) to third-party origins.
         response.headers["referrer-policy"] = "no-referrer"
-        if "text/html" in response.headers.get("content-type", ""):
-            # Tight CSP: no 'unsafe-inline' on script-src. Inline scripts on
-            # invite/dashboard pages use a per-request nonce (set below via
-            # response.headers), or are served as external files.
+        if ("text/html" in response.headers.get("content-type", "")
+                and "content-security-policy" not in response.headers):
+            # Tight CSP: no 'unsafe-inline' on script-src. A page that needs an
+            # inline script sets its own policy with a per-request nonce
+            # (routes/join_page.py), and that one is kept.
             response.headers["content-security-policy"] = (
                 "default-src 'self'; "
                 "script-src 'self'; "
@@ -908,6 +909,7 @@ from quorus.routes import router as relay_router  # noqa: E402
 from quorus.routes.admin_dashboard import router as admin_dashboard_router  # noqa: E402
 from quorus.routes.admin_metrics import router as admin_metrics_router  # noqa: E402
 from quorus.routes.join_codes import router as join_codes_router  # noqa: E402
+from quorus.routes.join_page import router as join_page_router  # noqa: E402
 from quorus.routes.join_redeem import router as join_redeem_router  # noqa: E402
 from quorus.routes.room_diff import router as room_diff_router  # noqa: E402
 from quorus.routes.room_scorecard import router as room_scorecard_router  # noqa: E402
@@ -927,6 +929,7 @@ app.include_router(join_redeem_router)
 app.include_router(admin_metrics_router)
 app.include_router(admin_dashboard_router)
 app.include_router(join_codes_router)
+app.include_router(join_page_router)
 
 
 # ---------------------------------------------------------------------------

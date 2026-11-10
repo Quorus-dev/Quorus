@@ -3,6 +3,7 @@
   POST /v1/join/mint                — admin-only; creates a short code.
   GET  /v1/join/resolve/{code}      — public, rate-limited; returns payload.
   GET  /v1/join/install/{code}.sh   — public; returns a bash installer.
+  GET  /j/{code}                    — public; the invite as a web page (join_page.py).
 
 The mint endpoint intentionally reuses the same envelope shape the
 client-side ``_encode_join_token`` produces, so the CLI's existing
@@ -46,6 +47,8 @@ class MintResponse(BaseModel):
     relay_url: str
     join_url: str
     install_url: str
+    # The invite as a web page (routes/join_page.py), for sending as a link.
+    page_url: str | None = None
     # Shared-secret relays: the invite's id, for `quorus invites --revoke`.
     invite_id: str | None = None
 
@@ -194,6 +197,7 @@ async def mint_code(
         relay_url=relay_url,
         join_url=f"{relay_url}/v1/join/resolve/{display_code}",
         install_url=f"{relay_url}/v1/join/install/{display_code}.sh",
+        page_url=f"{relay_url}/j/{display_code}",
         invite_id=invite_id,
     )
 
