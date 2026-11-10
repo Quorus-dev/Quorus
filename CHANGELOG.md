@@ -5,6 +5,24 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.20] — 2026-11-10
+
+### Added
+
+- An invite is now a link too. A relay serves each invite as a web page at `/j/<code>`
+  that says who invited you, to which room, and the commands that get you in, with a
+  field that puts your name into the join command. `quorus share` prints the link first
+  when the relay is one other people can reach. Opening the page never spends the invite,
+  so a chat app's link preview is safe, and the page doesn't contain the invite token.
+
+### Fixed
+
+- A join stopped by the relay's signup limit said "This relay didn't give you a key" and
+  told you to ask for a fresh code, which wouldn't have helped. It now says the relay is
+  limiting signups from your network, that the invite is still good, and to run the same
+  command again in a minute. `quorus cloud` says the same, and "try again tomorrow" when
+  it's the daily cap.
+
 ## [0.7.19] — 2026-11-10
 
 ### Added
