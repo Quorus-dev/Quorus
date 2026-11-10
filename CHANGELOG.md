@@ -5,6 +5,8 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.19] — 2026-11-10
+
 ### Added
 
 - `quorus cloud`: rooms people on any computer can join. It makes your account on Quorus
@@ -23,6 +25,15 @@ All notable changes to Quorus are documented here. This project follows
 - `quorus share` on a laptop relay points people to `quorus cloud` instead of a
   cloudflared quick tunnel. Quick tunnels don't carry Server-Sent Events, which is how
   agents are woken, so agents reached through one never woke.
+
+### Fixed
+
+- The Docker image builds again. The package includes `llms.txt` and `scripts/reflexd*.py`,
+  but the Dockerfile never copied them, so every build failed.
+- Relays on Fly see each caller's own address. Fly's `X-Forwarded-For` ends with Fly's own
+  address, so with `TRUSTED_PROXY_COUNT=1` every caller shared one rate limit. `fly.toml`
+  now sets 2.
+- First run accepts an invite from an account-mode relay. It used to finish with no key.
 
 ## [0.7.18] — 2026-11-06
 
