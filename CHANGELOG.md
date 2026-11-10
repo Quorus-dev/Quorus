@@ -5,6 +5,23 @@ All notable changes to Quorus are documented here. This project follows
 
 ## [Unreleased]
 
+## [0.7.21] — 2026-11-10
+
+### Changed
+
+- The terminal app's share card (`s` or `/share`) leads with the invite link when the relay
+  serves one, and `c` copies the link. On a relay that only this computer can reach, the
+  card says so and points to `quorus cloud`; it used to hand out a `curl` line with a
+  `127.0.0.1` address nobody else could use. On any other relay the join line now carries
+  the `--relay` a teammate needs. The card is as wide as its longest line, so a long
+  command no longer breaks its border.
+
+### Fixed
+
+- `quorus doctor` reported every healthy Quorus Cloud account as broken ("Relay secret
+  configured ✗") and exited 1. An account relay gives each person a key and has no shared
+  secret; the check is now "Relay credentials configured" and passes with either.
+
 ## [0.7.20] — 2026-11-10
 
 ### Added

@@ -35,6 +35,9 @@ def run_share_flow(
     code: str,
     install_url: str | None = None,
     read_one_key=None,
+    page_url: str | None = None,
+    local_only: bool = False,
+    join_relay: str | None = None,
 ) -> str:
     """Render the share card and block until the user dismisses it.
 
@@ -44,6 +47,9 @@ def run_share_flow(
     room_name      room being shared (display only)
     code           join code returned by ``_mint_join_token``
     install_url    optional one-line install URL for the card
+    page_url       optional link to the relay's invite page; `c` copies it
+    local_only     the relay is on this computer, so nobody else can join
+    join_relay     shell-quoted relay address a teammate adds as --relay
     read_one_key   optional callable returning one keypress char. Defaults
                    to ``readchar.readchar`` when available, else stdin
                    blocking ``input()``. Tests pass a stub.
@@ -61,6 +67,9 @@ def run_share_flow(
         code=code,
         install_url=install_url,
         console_width=width,
+        page_url=page_url,
+        local_only=local_only,
+        join_relay=join_relay,
     ):
         console.print(line)
     console.print()
@@ -74,8 +83,11 @@ def run_share_flow(
         return "Share card closed"
 
     if key and key.lower() == "c":
-        if _chat.copy_to_clipboard(code):
-            return f"Copied invite for #{room_name} to clipboard"
+        # The link is the thing to send when there is one: it works for
+        # someone who doesn't have Quorus yet.
+        if _chat.copy_to_clipboard(page_url or code):
+            what = "invite link" if page_url else "invite"
+            return f"Copied {what} for #{room_name} to clipboard"
         return f"Couldn't copy — code: {code}"
     return f"Share card closed for #{room_name}"
 

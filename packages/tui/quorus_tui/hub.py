@@ -1048,12 +1048,19 @@ def _safe_detail(r: "httpx.Response") -> str:
 
 
 def _mint_join_token(relay_url: str, secret: str, room: str) -> str:
-    """Mint a join code for *room* through the relay's ``POST /v1/join/mint``.
+    """The short code alone (see ``_mint_invite``), or "" when none was minted."""
+    return _mint_invite(relay_url, secret, room).get("code", "")
 
-    Returns the short code, or "" if the relay couldn't mint one. It used to fall
-    back to a local ``quorus_join_`` envelope holding the relay secret (admin) on
-    any failure, a 500 or a timeout included, so a hiccup handed the secret to
-    whoever got the invite. Now the share fails closed and the caller says why.
+
+def _mint_invite(relay_url: str, secret: str, room: str) -> dict[str, str]:
+    """Mint an invite for *room* through the relay's ``POST /v1/join/mint``.
+
+    Returns ``{"code": ..., "page_url": ...}``; ``page_url`` is "" unless the relay
+    serves the invite page (0.7.20+). Empty when the relay couldn't mint one. It
+    used to fall back to a local ``quorus_join_`` envelope holding the relay secret
+    (admin) on any failure, a 500 or a timeout included, so a hiccup handed the
+    secret to whoever got the invite. Now the share fails closed and the caller
+    says why.
     """
     try:
         r = httpx.post(
@@ -1064,11 +1071,42 @@ def _mint_join_token(relay_url: str, secret: str, room: str) -> str:
             follow_redirects=False,
         )
     except httpx.HTTPError:
-        return ""
+        return {}
     if r.status_code != 200:
-        return ""
+        return {}
     data = r.json()
-    return str(data.get("code") or data.get("display_code") or "")
+    code = str(data.get("code") or data.get("display_code") or "")
+    if not code:
+        return {}
+    return {"code": code, "page_url": str(data.get("page_url") or "")}
+
+
+def _share_card(console, room: str, invite: dict[str, str], relay_url: str) -> str:
+    """Show the share card for a minted invite and return the status-bar line.
+
+    A relay on this computer can't be reached by anyone else, so its card says
+    so and points at ``quorus cloud`` instead of handing out a loopback address.
+    """
+    import shlex
+
+    from quorus.cloud import public_relay
+    from quorus.config import same_relay
+    from quorus.http_settings import is_loopback
+    from quorus.services.join_code_svc import invite_page_url
+
+    from . import slash as _slash
+
+    code = invite["code"]
+    local_only = is_loopback(relay_url)
+    # A bare code is looked up on the joiner's own relay, then on Quorus Cloud;
+    # a code from any other relay needs its address.
+    hosted = bool(public_relay()) and same_relay(relay_url, public_relay())
+    join_relay = None if local_only or hosted else shlex.quote(relay_url.rstrip("/"))
+    return _slash.run_share_flow(
+        console=console, room_name=room, code=code,
+        install_url=None if local_only else _share_install_url(code, relay_url),
+        page_url=None if local_only else invite_page_url(invite.get("page_url", "")),
+        local_only=local_only, join_relay=join_relay)
 
 
 _MINT_FAILED = ("Couldn't make an invite: the relay didn't issue a code. "
@@ -2286,7 +2324,6 @@ def _slash_share(arg, state, relay_url, secret, agent_name, console):
     blocks until the user presses ``c`` (copy) or any key (dismiss).
     """
     del agent_name
-    from . import slash as _slash
 
     target = (arg.strip() or state.selected_room_name()).lstrip("#")
     if not target:
@@ -2296,18 +2333,11 @@ def _slash_share(arg, state, relay_url, secret, agent_name, console):
     if not any((r.get("name") or "") == target for r in rooms_snap):
         state.set_status_bar(f"no room '{target}' — try /rooms")
         return True
-    code = _mint_join_token(relay_url, secret, target)
-    if not code:
+    invite = _mint_invite(relay_url, secret, target)
+    if not invite:
         state.set_status_bar(_MINT_FAILED)
         return True
-    install_url = _share_install_url(code, relay_url)
-    status = _slash.run_share_flow(
-        console=console,
-        room_name=target,
-        code=code,
-        install_url=install_url,
-    )
-    state.set_status_bar(status)
+    state.set_status_bar(_share_card(console, target, invite, relay_url))
     return True
 
 
@@ -3738,7 +3768,6 @@ def _main_input_loop(
                 #   * In a room → mint + show card immediately, no prompt.
                 #   * Welcome view, exactly one room → share that one.
                 #   * Welcome view, multiple rooms → prompt for which.
-                from . import slash as _slash_mod
 
                 rooms_snap = state.get_rooms()
                 target = state.selected_room_name()
@@ -3759,17 +3788,12 @@ def _main_input_loop(
                         f"No room '{target}' — press r for the list."
                     )
                 else:
-                    code = _mint_join_token(relay_url, secret, target)
-                    if not code:
+                    invite = _mint_invite(relay_url, secret, target)
+                    if not invite:
                         state.set_status_bar(_MINT_FAILED)
                     else:
-                        status = _slash_mod.run_share_flow(
-                            console=console,
-                            room_name=target,
-                            code=code,
-                            install_url=_share_install_url(code, relay_url),
-                        )
-                        state.set_status_bar(status)
+                        state.set_status_bar(
+                            _share_card(console, target, invite, relay_url))
                 last_render = 0
                 continue
 
