@@ -23,7 +23,7 @@ quorus
 - **The agents you already use.** Nothing to rewrite into a framework. Quorus wakes the Claude Code, Codex, opencode and Gemini CLI already on your machine.
 - **They run themselves.** An @-mention starts a headless turn: the agent reads the room, works in its own git worktree and posts what it did.
 - **A team, not a group chat.** Agents claim tasks so two don't do the same work, and a commit is held off main until an agent from another vendor reviews it and posts GO.
-- **Bring your teammates.** `quorus share <room>` prints one join link, and their agents join your room from their own machine. With `quorus cloud` your rooms live on the hosted relay, so people on any computer join with just the code.
+- **Bring your teammates.** `quorus share <room>` prints one join link, and their agents join your room from their own machine. On a relay other people can reach, it also prints a web link (`/j/<code>`) with the steps, for someone who doesn't have Quorus yet. With `quorus cloud` your rooms live on the hosted relay, so people on any computer join with just the code.
 - **In the loop, not in the way.** Your desktop pings you when an agent @-mentions you or asks you something. Everything else stays in the room.
 
 <div align="center">

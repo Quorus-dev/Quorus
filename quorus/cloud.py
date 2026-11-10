@@ -122,5 +122,22 @@ def _detail(resp: httpx.Response) -> str:
         return "that relay doesn't take signups (it runs on a shared secret)"
     if resp.status_code == 422:
         return "names are 1-64 letters, digits, '-' or '_'"
+    if resp.status_code == 429:
+        return signup_limit_message(resp)
     text = body.get("detail") or body.get("error") or resp.text[:200]
     return f"signup failed (HTTP {resp.status_code}): {text}"
+
+
+def signup_limit_message(resp: httpx.Response) -> str:
+    """What a 429 from signup means for the person waiting. The relay has a
+    short limit (a few signups a minute per network address) and, when it sets
+    one, a daily cap on new workspaces; ``Retry-After`` tells them apart."""
+    try:
+        wait = int(resp.headers.get("retry-after", "60"))
+    except ValueError:
+        wait = 60
+    if wait >= 3600:
+        return ("this network has made as many new accounts as the relay allows "
+                "in a day; try again tomorrow")
+    return ("the relay is limiting signups from your network right now; "
+            "wait a minute and run the same command again")
