@@ -103,6 +103,25 @@ jobs:
           JWT_SECRET: test-jwt-secret-that-is-at-least-32-chars
           BOOTSTRAP_SECRET: test-bootstrap-secret-32-chars-min
 
+  docker:
+    # The image is what Quorus Cloud and every self-hosted relay run. It broke
+    # once without any check noticing (a file the build needs wasn't copied in).
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the relay image
+        run: docker build -t quorus-relay:ci .
+
+      - name: Build the hosted-relay image (embedded Redis)
+        run: docker build --build-arg WITH_LOCAL_REDIS=1 --build-arg RUN_AS=root -t quorus-cloud:ci .
+
+      - name: The relay imports inside the image
+        run: |
+          docker run --rm -e RELAY_SECRET=ci-test-secret --entrypoint python quorus-relay:ci -c "import quorus.relay, quorus; print(quorus.__version__)"
+          docker run --rm --entrypoint sh quorus-cloud:ci -c "command -v redis-server && test -x /app/start-cloud.sh"
+
   test-redis:
     name: Tests (Redis integration)
     runs-on: ubuntu-latest
