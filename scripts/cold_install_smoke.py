@@ -120,6 +120,10 @@ def _http_get(
         return e.code, e.read() if hasattr(e, "read") else b""
 
 
+# A cold Windows runner can take several seconds to answer the first write.
+REQUEST_TIMEOUT = 30.0
+
+
 def _http_post(
     url: str,
     body: dict,
@@ -325,7 +329,7 @@ def run(port: int, timeout: int) -> None:
             f"http://127.0.0.1:{port}/rooms",
             {"name": ROOM_NAME, "created_by": PARTICIPANT},
             headers=auth_headers,
-            timeout=5.0,
+            timeout=REQUEST_TIMEOUT,
         )
         if status not in (200, 201):
             _fail(6, f"POST /rooms returned {status} body={body[:300]!r}")
@@ -342,7 +346,7 @@ def run(port: int, timeout: int) -> None:
             f"http://127.0.0.1:{port}/rooms/{room_id}/messages",
             {"from_name": PARTICIPANT, "content": MESSAGE_PAYLOAD},
             headers=auth_headers,
-            timeout=5.0,
+            timeout=REQUEST_TIMEOUT,
         )
         if status not in (200, 201):
             _fail(7, f"POST /rooms/{room_id}/messages returned {status} body={body[:300]!r}")
@@ -357,7 +361,7 @@ def run(port: int, timeout: int) -> None:
             status, body = _http_get(
                 f"http://127.0.0.1:{port}/rooms/{room_id}/history?limit=10",
                 headers=auth_headers,
-                timeout=5.0,
+                timeout=REQUEST_TIMEOUT,
             )
             last_seen_body = body
             if status == 200 and MESSAGE_PAYLOAD.encode() in body:
